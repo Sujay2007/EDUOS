@@ -3,6 +3,7 @@
 #include "pic.h"
 #include "idt.h"
 #include "serial.h"
+#include "thread.h"
 
 #define KBD_DATA_PORT   0x60
 #define KBD_STATUS_PORT 0x64
@@ -96,14 +97,50 @@ static void keyboard_isr(struct interrupt_frame *frame) {
                 kbd_buffer[kbd_head] = ch;
                 kbd_head = next_head;
             }
+            thread_wake_input();
         }
     }
+}
+
+void keyboard_drain_serial(void) {
+    int drained = 0;
+    while (serial_has_rx()) {
+        int ser_ch = serial_getchar_nonblock();
+        if (ser_ch >= 0) {
+            /* Normalize CR/LF and Backspace */
+            if (ser_ch == '\r') {
+                ser_ch = '\n';
+            } else if (ser_ch == 127) {
+                ser_ch = '\b';
+            }
+            uint32_t next_head = (kbd_head + 1) % KEYBOARD_BUFFER_SIZE;
+            if (next_head != kbd_tail) {
+                kbd_buffer[kbd_head] = (char)ser_ch;
+                kbd_head = next_head;
+                drained = 1;
+            }
+        }
+    }
+    if (drained) {
+        thread_wake_input();
+    }
+}
+
+static void com1_isr(struct interrupt_frame *frame) {
+    (void)frame;
+    keyboard_drain_serial();
+    pic_send_eoi(4);
 }
 
 int keyboard_init(void) {
     /* Drain any pending bytes from keyboard data port */
     while (inb(KBD_STATUS_PORT) & 0x01) {
         inb(KBD_DATA_PORT);
+    }
+
+    /* Drain any pending bytes from serial port */
+    while (serial_has_rx()) {
+        serial_getchar_nonblock();
     }
 
     /* Reset buffer indices and state */
@@ -120,11 +157,22 @@ int keyboard_init(void) {
     /* Unmask IRQ1 on Master PIC */
     pic_clear_mask(1);
 
+    /* Register ISR for IRQ4 (vector 36) for COM1 */
+    idt_register_handler(36, com1_isr);
+
+    /* Enable COM1 RX interrupt and unmask IRQ4 on Master PIC */
+    serial_enable_rx_interrupt();
+    pic_clear_mask(4);
+
     return 0;
 }
 
 int keyboard_getchar_nonblock(void) {
     uint64_t rflags = interrupts_save_and_disable();
+
+    if (serial_has_rx()) {
+        keyboard_drain_serial();
+    }
 
     /* 1. Check PS/2 keyboard ring buffer */
     if (kbd_head != kbd_tail) {
@@ -135,30 +183,35 @@ int keyboard_getchar_nonblock(void) {
     }
 
     interrupts_restore(rflags);
-
-    /* 2. Check COM1 serial input */
-    int ser_ch = serial_getchar_nonblock();
-    if (ser_ch >= 0) {
-        /* Normalize CR/LF and Backspace */
-        if (ser_ch == '\r') {
-            return '\n';
-        }
-        if (ser_ch == 127) {
-            return '\b';
-        }
-        return ser_ch;
-    }
-
     return -1;
 }
 
 char keyboard_getchar(void) {
     for (;;) {
-        int c = keyboard_getchar_nonblock();
-        if (c >= 0) {
-            return (char)c;
+        uint64_t rflags = interrupts_save_and_disable();
+
+        /* 1. Check PS/2 keyboard ring buffer */
+        if (kbd_head != kbd_tail) {
+            char ch = kbd_buffer[kbd_tail];
+            kbd_tail = (kbd_tail + 1) % KEYBOARD_BUFFER_SIZE;
+            interrupts_restore(rflags);
+            return ch;
         }
-        __asm__ volatile ("hlt");
+
+        /* 2. Check COM1 serial input */
+        if (serial_has_rx()) {
+            keyboard_drain_serial();
+            if (kbd_head != kbd_tail) {
+                char ch = kbd_buffer[kbd_tail];
+                kbd_tail = (kbd_tail + 1) % KEYBOARD_BUFFER_SIZE;
+                interrupts_restore(rflags);
+                return ch;
+            }
+        }
+
+        /* 3. Block current thread until keyboard or serial interrupt arrives */
+        thread_wait_input();
+        interrupts_restore(rflags);
     }
 }
 

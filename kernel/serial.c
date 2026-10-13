@@ -8,7 +8,8 @@ void serial_init(void) {
     outb(COM1_PORT + 1, 0x00); /*                  (hi byte) */
     outb(COM1_PORT + 3, 0x03); /* 8 bits, no parity, one stop bit */
     outb(COM1_PORT + 2, 0xC7); /* Enable FIFO, clear them, with 14-byte threshold */
-    outb(COM1_PORT + 4, 0x0B); /* IRQs enabled, RTS/DSR set */
+    outb(COM1_PORT + 4, 0x0B); /* IRQs enabled (OUT2), RTS/DTR set */
+    outb(COM1_PORT + 1, 0x01); /* Enable Received Data Available Interrupt (IER bit 0) */
 }
 
 void serial_putchar(char c) {
@@ -70,4 +71,8 @@ char serial_getchar(void) {
         __asm__ volatile ("pause");
     }
     return (char)inb(COM1_PORT);
+}
+
+void serial_enable_rx_interrupt(void) {
+    outb(COM1_PORT + 1, 0x01);
 }

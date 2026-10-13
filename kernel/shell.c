@@ -334,12 +334,7 @@ void shell_run(void) {
     terminal_write(SHELL_PROMPT);
 
     for (;;) {
-        int ch = keyboard_getchar_nonblock();
-        if (ch < 0) {
-            /* Non-busy wait: yield CPU to background threads or idle thread */
-            thread_yield();
-            continue;
-        }
+        char ch = keyboard_getchar();
 
         if (ch == '\n') {
             terminal_putchar('\n');
@@ -354,8 +349,8 @@ void shell_run(void) {
             }
         } else if (ch >= 32 && ch <= 126) {
             if (line_len < SHELL_BUFFER_SIZE - 1) {
-                line_buf[line_len++] = (char)ch;
-                terminal_putchar((char)ch);
+                line_buf[line_len++] = ch;
+                terminal_putchar(ch);
             }
         }
     }

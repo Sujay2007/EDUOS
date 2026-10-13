@@ -48,4 +48,9 @@ int serial_getchar_nonblock(void);
  */
 char serial_getchar(void);
 
+/*
+ * Enable Received Data Available Interrupt on COM1 UART (IER bit 0).
+ */
+void serial_enable_rx_interrupt(void);
+
 #endif /* SERIAL_H */

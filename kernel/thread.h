@@ -79,6 +79,16 @@ void thread_sleep(uint64_t ticks);
 void thread_wake(struct thread *t);
 
 /*
+ * Block the calling thread until keyboard or serial input arrives.
+ */
+void thread_wait_input(void);
+
+/*
+ * Wake the thread waiting for input (if any), transitioning it from BLOCKED to READY.
+ */
+void thread_wake_input(void);
+
+/*
  * Terminate the calling thread and yield CPU.
  * Does not return.
  */

@@ -52,4 +52,9 @@ char keyboard_getchar(void);
  */
 int keyboard_has_char(void);
 
+/*
+ * Drain any pending bytes from COM1 serial into the keyboard input buffer.
+ */
+void keyboard_drain_serial(void);
+
 #endif /* KEYBOARD_H */

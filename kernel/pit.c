@@ -1,6 +1,8 @@
 #include "pit.h"
 #include "pic.h"
 #include "idt.h"
+#include "serial.h"
+#include "keyboard.h"
 
 #define PIT_CHANNEL0_DATA 0x40
 #define PIT_COMMAND_PORT  0x43
@@ -18,6 +20,11 @@ static void pit_irq_handler(struct interrupt_frame *frame) {
     timer_ticks++;
     /* Send EOI for IRQ0 */
     pic_send_eoi(0);
+
+    /* Backup check: drain serial into keyboard buffer if any bytes arrived */
+    if (serial_has_rx()) {
+        keyboard_drain_serial();
+    }
 }
 
 void pit_init(uint32_t target_hz) {

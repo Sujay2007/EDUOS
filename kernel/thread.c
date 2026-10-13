@@ -9,6 +9,7 @@ static struct thread *current_thread = NULL;
 static struct thread *idle_thread = NULL;
 static struct thread *main_thread = NULL;
 static struct thread *dead_threads_head = NULL;
+static struct thread *input_waiting_thread = NULL;
 
 static tid_t next_tid = 1;
 static int scheduler_active = 0;
@@ -84,6 +85,9 @@ static void remove_thread_from_list(struct thread *t) {
     if (thread_list_head == t) {
         thread_list_head = t->next;
         t->next = NULL;
+        if (input_waiting_thread == t) {
+            input_waiting_thread = NULL;
+        }
         return;
     }
 
@@ -95,6 +99,9 @@ static void remove_thread_from_list(struct thread *t) {
     if (curr->next == t) {
         curr->next = t->next;
         t->next = NULL;
+    }
+    if (input_waiting_thread == t) {
+        input_waiting_thread = NULL;
     }
 }
 
@@ -253,9 +260,8 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
 
     uint64_t vec = frame->vector;
 
-    /* 2. Hardware Timer Interrupt (Vector 32) */
+    /* 2. Check sleeping threads deadline on Timer Interrupt (Vector 32) */
     if (vec == 32) {
-        /* Check and wake sleeping threads whose deadlines have arrived */
         uint64_t now = timer_get_ticks();
         struct thread *t = thread_list_head;
         while (t != NULL) {
@@ -269,26 +275,55 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
         }
 
         current_thread->total_ticks++;
+    }
 
-        int preempt_needed = 0;
-        if (current_thread == idle_thread) {
-            /* If any non-idle thread is READY, preempt idle thread immediately */
-            struct thread *check = thread_list_head;
-            while (check != NULL) {
-                if (check != idle_thread && check->state == THREAD_STATE_READY) {
-                    preempt_needed = 1;
-                    break;
+    /*
+     * 3. Immediate preemption of idle thread:
+     * If the idle thread is currently running and any non-idle thread is READY
+     * (e.g. woken by timer tick, keyboard IRQ1, or serial IRQ4), immediately
+     * switch from idle_thread to that runnable thread.
+     */
+    if (current_thread == idle_thread) {
+        struct thread *check = thread_list_head;
+        int has_ready = 0;
+        while (check != NULL) {
+            if (check != idle_thread && check->state == THREAD_STATE_READY) {
+                has_ready = 1;
+                break;
+            }
+            check = check->next;
+        }
+
+        if (has_ready) {
+            current_thread->saved_frame = frame;
+            struct thread *next = select_next_thread();
+            if (next != current_thread) {
+                next->state = THREAD_STATE_RUNNING;
+                next->run_count++;
+                next->time_slice_ticks = SCHEDULER_QUANTUM_TICKS;
+                sched_stats.total_switches++;
+                if (vec == 32) {
+                    sched_stats.timer_preemptions++;
                 }
-                check = check->next;
+                current_thread = next;
+                if (next->stack_base != NULL) {
+                    gdt_set_kernel_stack((uint64_t)next->stack_base + next->stack_size);
+                }
+                return next->saved_frame;
             }
-        } else {
-            if (current_thread->time_slice_ticks > 0) {
-                current_thread->time_slice_ticks--;
-            }
-            if (current_thread->time_slice_ticks == 0 ||
-                current_thread->state != THREAD_STATE_RUNNING) {
-                preempt_needed = 1;
-            }
+        }
+        return frame;
+    }
+
+    /* 4. Timer Preemption for active non-idle threads (Vector 32) */
+    if (vec == 32) {
+        int preempt_needed = 0;
+        if (current_thread->time_slice_ticks > 0) {
+            current_thread->time_slice_ticks--;
+        }
+        if (current_thread->time_slice_ticks == 0 ||
+            current_thread->state != THREAD_STATE_RUNNING) {
+            preempt_needed = 1;
         }
 
         if (preempt_needed) {
@@ -316,7 +351,7 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
         return frame;
     }
 
-    /* 3. Software Yield / Sleep / Exit Interrupt (Vector 48) */
+    /* 5. Software Yield / Sleep / Wait / Exit Interrupt (Vector 48) */
     if (vec == 48) {
         current_thread->saved_frame = frame;
 
@@ -374,6 +409,30 @@ void thread_wake(struct thread *t) {
     if (t->state == THREAD_STATE_BLOCKED) {
         t->state = THREAD_STATE_READY;
         t->sleep_deadline = 0;
+    }
+    interrupts_restore(rflags);
+}
+
+void thread_wait_input(void) {
+    if (!scheduler_active) {
+        __asm__ volatile ("sti; hlt");
+        return;
+    }
+
+    input_waiting_thread = current_thread;
+    current_thread->state = THREAD_STATE_BLOCKED;
+    current_thread->sleep_deadline = 0;
+
+    __asm__ volatile ("int $48" : : : "memory");
+}
+
+void thread_wake_input(void) {
+    uint64_t rflags = interrupts_save_and_disable();
+    if (input_waiting_thread != NULL) {
+        if (input_waiting_thread->state == THREAD_STATE_BLOCKED) {
+            input_waiting_thread->state = THREAD_STATE_READY;
+        }
+        input_waiting_thread = NULL;
     }
     interrupts_restore(rflags);
 }
