@@ -73,6 +73,12 @@ typedef void (*isr_handler_t)(struct interrupt_frame *frame);
 void idt_init(void);
 
 /*
+ * Common C interrupt dispatcher called from assembly.
+ * Returns pointer to the interrupt frame to restore (allowing stack switch).
+ */
+struct interrupt_frame *isr_dispatch(struct interrupt_frame *frame);
+
+/*
  * Register an ISR handler for an interrupt vector.
  */
 void idt_register_handler(uint8_t vector, isr_handler_t handler);

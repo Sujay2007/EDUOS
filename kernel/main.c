@@ -36,6 +36,8 @@ static volatile LIMINE_REQUESTS_END_MARKER;
 #include "keyboard.h"
 #include "terminal.h"
 #include "shell.h"
+#include "thread.h"
+#include "thread_test.h"
 
 static const char *memmap_type_to_string(uint64_t type) {
     switch (type) {
@@ -567,9 +569,15 @@ void _start(void) {
     /* Initialize keyboard driver, terminal abstraction, and shell */
     keyboard_init();
     terminal_init();
-    shell_init();
 
-    /* Launch interactive shell */
+    /* Initialize kernel multitasking and round-robin scheduler */
+    thread_init();
+
+    /* Run kernel multitasking and preemption verification suite */
+    thread_test_all();
+
+    /* Initialize and launch interactive shell */
+    shell_init();
     shell_run();
 
     for (;;) {

@@ -60,6 +60,7 @@ extern void isr_stub_44(void);
 extern void isr_stub_45(void);
 extern void isr_stub_46(void);
 extern void isr_stub_47(void);
+extern void isr_stub_48(void);
 
 static const char *exception_messages[32] = {
     "Divide-by-zero Error",
@@ -117,16 +118,15 @@ static inline uint64_t read_cr2(void) {
     return cr2;
 }
 
-void isr_dispatch(struct interrupt_frame *frame) {
+extern struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame);
+
+struct interrupt_frame *isr_dispatch(struct interrupt_frame *frame) {
     uint64_t vec = frame->vector;
 
     if (vec < IDT_ENTRIES && isr_handlers[vec] != NULL) {
         isr_handlers[vec](frame);
-        return;
-    }
-
-    /* If unhandled CPU exception (0..31), print diagnostic and halt safely */
-    if (vec < 32) {
+    } else if (vec < 32) {
+        /* If unhandled CPU exception (0..31), print diagnostic and halt safely */
         serial_write("\r\n====================================================================\r\n");
         serial_write("!!! CPU EXCEPTION OCCURRED !!!\r\n");
         serial_write("  Vector    : ");
@@ -158,12 +158,13 @@ void isr_dispatch(struct interrupt_frame *frame) {
         for (;;) {
             __asm__ volatile ("cli; hlt");
         }
-    }
-
-    /* Unhandled hardware interrupt: send EOI to prevent cascade lockup */
-    if (vec >= 32 && vec <= 47) {
+    } else if (vec >= 32 && vec <= 47) {
+        /* Unhandled hardware interrupt: send EOI to prevent cascade lockup */
         pic_send_eoi((uint8_t)(vec - 32));
     }
+
+    /* Notify scheduler for preemption, sleep check, or voluntary yield */
+    return scheduler_on_interrupt(frame);
 }
 
 void idt_init(void) {
@@ -208,6 +209,9 @@ void idt_init(void) {
     for (int i = 0; i < 16; i++) {
         idt_set_gate((uint8_t)(32 + i), irq_stubs[i], 0, IDT_ATTR_INTERRUPT_GATE);
     }
+
+    /* Install Software Yield / Scheduling Gate (Vector 48) */
+    idt_set_gate(48, isr_stub_48, 0, IDT_ATTR_INTERRUPT_GATE);
 
     /* Remap PIC to vector 32 (IRQ 0..7) and 40 (IRQ 8..15), and mask all IRQs initially */
     pic_remap(32, 40);

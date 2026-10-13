@@ -6,6 +6,7 @@
 #include "pit.h"
 #include "io.h"
 #include "idt.h"
+#include "thread.h"
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_PROMPT "edus> "
@@ -20,14 +21,18 @@ static int streq(const char *s1, const char *s2) {
 
 static void cmd_help(void) {
     terminal_writeln("Educational OS Shell - Available Commands:");
-    terminal_writeln("  help     - Display this help information");
-    terminal_writeln("  clear    - Clear the terminal screen");
-    terminal_writeln("  mem      - Display physical memory allocator (PFA) statistics");
-    terminal_writeln("  heap     - Display dynamic kernel heap statistics");
-    terminal_writeln("  ticks    - Display timer tick count and interrupt frequency");
-    terminal_writeln("  uptime   - Display system uptime since boot");
-    terminal_writeln("  about    - Display educational OS system information");
-    terminal_writeln("  reboot   - Reboot the computer");
+    terminal_writeln("  help          - Display this help information");
+    terminal_writeln("  clear         - Clear the terminal screen");
+    terminal_writeln("  mem           - Display physical memory allocator (PFA) statistics");
+    terminal_writeln("  heap          - Display dynamic kernel heap statistics");
+    terminal_writeln("  ticks         - Display timer tick count and interrupt frequency");
+    terminal_writeln("  uptime        - Display system uptime since boot");
+    terminal_writeln("  threads       - List active kernel threads and lifecycle states");
+    terminal_writeln("  sched         - Display scheduler execution metrics and context switches");
+    terminal_writeln("  yield         - Voluntarily yield the CPU to another thread");
+    terminal_writeln("  sleep <ticks> - Block current thread for specified timer ticks");
+    terminal_writeln("  about         - Display educational OS system information");
+    terminal_writeln("  reboot        - Reboot the computer");
 }
 
 static void cmd_clear(void) {
@@ -124,6 +129,102 @@ static void cmd_uptime(void) {
     terminal_writeln(" ticks)");
 }
 
+static void cmd_threads(void) {
+    terminal_writeln("Active Kernel Threads:");
+    thread_print_table();
+}
+
+static void cmd_sched(void) {
+    struct scheduler_stats stats;
+    scheduler_get_stats(&stats);
+
+    terminal_writeln("Scheduler Execution Metrics:");
+    terminal_write("  Total Context Switches : ");
+    terminal_write_dec(stats.total_switches);
+    terminal_writeln("");
+
+    terminal_write("  Timer Preemptions      : ");
+    terminal_write_dec(stats.timer_preemptions);
+    terminal_writeln("");
+
+    terminal_write("  Voluntary Yields       : ");
+    terminal_write_dec(stats.voluntary_yields);
+    terminal_writeln("");
+
+    terminal_write("  Active Threads Total   : ");
+    terminal_write_dec(stats.active_threads);
+    terminal_writeln("");
+
+    terminal_write("    READY                : ");
+    terminal_write_dec(stats.ready_threads);
+    terminal_writeln("");
+
+    terminal_write("    RUNNING              : ");
+    terminal_write_dec(stats.running_threads);
+    terminal_writeln("");
+
+    terminal_write("    BLOCKED              : ");
+    terminal_write_dec(stats.blocked_threads);
+    terminal_writeln("");
+
+    terminal_write("    TERMINATED           : ");
+    terminal_write_dec(stats.terminated_threads);
+    terminal_writeln("");
+
+    terminal_write("  PIT Timer Frequency    : ");
+    terminal_write_dec(timer_get_frequency());
+    terminal_writeln(" Hz (10 ms per tick)");
+}
+
+static void cmd_yield(void) {
+    terminal_writeln("Voluntarily yielding CPU to scheduler...");
+    thread_yield();
+    terminal_writeln("Resumed execution from voluntary yield.");
+}
+
+static void cmd_sleep(const char *arg) {
+    /* Skip whitespace */
+    while (*arg == ' ' || *arg == '\t') {
+        arg++;
+    }
+
+    if (*arg == '\0') {
+        terminal_writeln("Usage: sleep <ticks>");
+        terminal_writeln("  Note: 1 tick = 10 ms at 100 Hz PIT timer (e.g. 'sleep 100' = 1 second).");
+        return;
+    }
+
+    /* Validate and parse unsigned integer */
+    uint64_t ticks = 0;
+    const char *p = arg;
+    while (*p >= '0' && *p <= '9') {
+        ticks = (ticks * 10) + (*p - '0');
+        p++;
+    }
+
+    if (*p != '\0' && *p != ' ' && *p != '\t') {
+        terminal_writeln("Error: Invalid tick value. Expected positive integer.");
+        return;
+    }
+
+    if (ticks == 0) {
+        terminal_writeln("Sleeping for 0 ticks (immediate yield)...");
+        thread_yield();
+        terminal_writeln("Woke up from sleep.");
+        return;
+    }
+
+    terminal_write("Blocking current thread for ");
+    terminal_write_dec(ticks);
+    terminal_write(" ticks (~");
+    terminal_write_dec(ticks * 10);
+    terminal_writeln(" ms)...");
+
+    thread_sleep(ticks);
+
+    terminal_writeln("Woke up from sleep (deadline reached)!");
+}
+
 static void cmd_about(void) {
     terminal_writeln("==================================================");
     terminal_writeln("  Educational Operating System (x86-64)");
@@ -138,6 +239,7 @@ static void cmd_about(void) {
     terminal_writeln("    - Interrupt Handling (256-Entry IDT)");
     terminal_writeln("    - 8259 PIC & 8254 PIT (100 Hz Timer)");
     terminal_writeln("    - PS/2 Keyboard Driver & UART Serial Driver");
+    terminal_writeln("    - Preemptive Multitasking & Round-Robin Scheduler");
     terminal_writeln("    - Interactive Terminal & Command Shell");
 }
 
@@ -185,6 +287,8 @@ static void execute_command(char *cmd_line) {
     }
     cmd[i] = '\0';
 
+    const char *args = &cmd_line[i];
+
     if (streq(cmd, "help")) {
         cmd_help();
     } else if (streq(cmd, "clear")) {
@@ -197,6 +301,14 @@ static void execute_command(char *cmd_line) {
         cmd_ticks();
     } else if (streq(cmd, "uptime")) {
         cmd_uptime();
+    } else if (streq(cmd, "threads")) {
+        cmd_threads();
+    } else if (streq(cmd, "sched")) {
+        cmd_sched();
+    } else if (streq(cmd, "yield")) {
+        cmd_yield();
+    } else if (streq(cmd, "sleep")) {
+        cmd_sleep(args);
     } else if (streq(cmd, "about")) {
         cmd_about();
     } else if (streq(cmd, "reboot")) {
@@ -222,7 +334,12 @@ void shell_run(void) {
     terminal_write(SHELL_PROMPT);
 
     for (;;) {
-        char ch = keyboard_getchar();
+        int ch = keyboard_getchar_nonblock();
+        if (ch < 0) {
+            /* Non-busy wait: yield CPU to background threads or idle thread */
+            thread_yield();
+            continue;
+        }
 
         if (ch == '\n') {
             terminal_putchar('\n');
@@ -237,8 +354,8 @@ void shell_run(void) {
             }
         } else if (ch >= 32 && ch <= 126) {
             if (line_len < SHELL_BUFFER_SIZE - 1) {
-                line_buf[line_len++] = ch;
-                terminal_putchar(ch);
+                line_buf[line_len++] = (char)ch;
+                terminal_putchar((char)ch);
             }
         }
     }

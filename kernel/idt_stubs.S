@@ -70,6 +70,7 @@ ISR_NOERRCODE 44  # IRQ12: Mouse
 ISR_NOERRCODE 45  # IRQ13: FPU
 ISR_NOERRCODE 46  # IRQ14: Primary ATA
 ISR_NOERRCODE 47  # IRQ15: Secondary ATA
+ISR_NOERRCODE 48  # Vector 48: Scheduler Yield / Software Interrupt
 
 # Common ISR stub
 .extern isr_dispatch
@@ -95,6 +96,7 @@ isr_common_stub:
     mov rdi, rsp
     cld                     # Direction flag cleared per SysV ABI
     call isr_dispatch
+    mov rsp, rax            # Switch stack pointer if isr_dispatch returned new thread frame
 
     # Restore registers
     pop r15
