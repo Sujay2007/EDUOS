@@ -8,13 +8,19 @@ LDFLAGS = -nostdlib -static -z max-page-size=0x1000 -T linker.ld
 
 all: educational-os.iso
 
-OBJS = kernel/main.o kernel/pfa.o
+OBJS = kernel/main.o kernel/pfa.o kernel/vmm.o kernel/heap.o
 
-kernel/main.o: kernel/main.c kernel/pfa.h tools/limine/limine.h
+kernel/main.o: kernel/main.c kernel/pfa.h kernel/vmm.h kernel/heap.h tools/limine/limine.h
 	$(CC) $(CFLAGS) -c kernel/main.c -o kernel/main.o
 
 kernel/pfa.o: kernel/pfa.c kernel/pfa.h tools/limine/limine.h
 	$(CC) $(CFLAGS) -c kernel/pfa.c -o kernel/pfa.o
+
+kernel/vmm.o: kernel/vmm.c kernel/vmm.h kernel/pfa.h tools/limine/limine.h
+	$(CC) $(CFLAGS) -c kernel/vmm.c -o kernel/vmm.o
+
+kernel/heap.o: kernel/heap.c kernel/heap.h kernel/vmm.h kernel/pfa.h
+	$(CC) $(CFLAGS) -c kernel/heap.c -o kernel/heap.o
 
 kernel/kernel.elf: $(OBJS) linker.ld
 	$(LD) $(LDFLAGS) -o kernel/kernel.elf $(OBJS)
