@@ -541,6 +541,72 @@ static void test_heap(void) {
     print_heap_stats("Final State After All Frees");
 }
 
+#include "gdt.h"
+#include "idt.h"
+#include "pit.h"
+
+static volatile int breakpoint_handled = 0;
+
+static void custom_breakpoint_handler(struct interrupt_frame *frame) {
+    (void)frame;
+    breakpoint_handled = 1;
+    serial_write("  [INT3 HANDLER] Recoverable Breakpoint (#BP) successfully intercepted!\r\n");
+}
+
+static void test_gdt_idt_exceptions_and_timer(void) {
+    serial_write("\r\n====================================================================\r\n");
+    serial_write("Initializing Global Descriptor Table (GDT) and TSS...\r\n");
+    gdt_init();
+    serial_write("[GDT] GDT loaded, segment registers and CS reloaded, TSS loaded!\r\n");
+
+    serial_write("\r\nInitializing Interrupt Descriptor Table (IDT)...\r\n");
+    idt_init();
+    serial_write("[IDT] 256-entry IDT loaded with CPU exceptions and hardware IRQs!\r\n");
+
+    /* Test controlled, recoverable exception (INT3 / Breakpoint) */
+    serial_write("\r\n[EXCEPTION TEST] Testing controlled recoverable exception (#BP / INT 3)...\r\n");
+    idt_register_handler(3, custom_breakpoint_handler);
+    breakpoint_handled = 0;
+    __asm__ volatile ("int3");
+
+    if (breakpoint_handled) {
+        serial_write("  [EXCEPTION TEST] Breakpoint exception handling verified (PASS)\r\n");
+    } else {
+        serial_write("  [EXCEPTION TEST] Breakpoint not handled! (FAIL)\r\n");
+    }
+
+    /* Initialize Hardware Timer (8254 PIT) */
+    serial_write("\r\nInitializing 8254 Programmable Interval Timer (PIT)...\r\n");
+    pit_init(100); /* 100 Hz = 10ms per tick */
+    serial_write("[PIT] PIT initialized at ");
+    serial_write_dec(timer_get_frequency());
+    serial_write(" Hz (IRQ0 -> Vector 32)!\r\n");
+
+    /* Enable maskable hardware interrupts */
+    serial_write("[INT] Enabling maskable interrupts (sti)...\r\n");
+    interrupts_enable();
+
+    serial_write("[TIMER] Sampling hardware timer ticks over periodic intervals:\r\n");
+    uint64_t last_tick = timer_get_ticks();
+    int samples = 0;
+
+    while (samples < 5) {
+        uint64_t current_tick = timer_get_ticks();
+        if (current_tick >= last_tick + 20) { /* ~200 ms interval */
+            samples++;
+            last_tick = current_tick;
+            serial_write("  [Tick Sample ");
+            serial_write_dec(samples);
+            serial_write("/5] Current Ticks: ");
+            serial_write_dec(current_tick);
+            serial_write(" (monotonic progress verified)\r\n");
+        }
+        __asm__ volatile ("pause");
+    }
+
+    serial_write("[TIMER] Timer interrupt handling is stable and verified!\r\n");
+}
+
 void _start(void) {
     serial_init();
     serial_write("\r\nEducational OS kernel booted successfully!\r\n");
@@ -550,10 +616,11 @@ void _start(void) {
     test_pfa();
     test_vmm();
     test_heap();
+    test_gdt_idt_exceptions_and_timer();
 
     serial_write("\r\nAll milestone verifications completed successfully!\r\n");
 
     for (;;) {
-        __asm__ volatile ("cli; hlt");
+        __asm__ volatile ("hlt");
     }
 }

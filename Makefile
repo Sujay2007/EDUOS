@@ -8,9 +8,11 @@ LDFLAGS = -nostdlib -static -z max-page-size=0x1000 -T linker.ld
 
 all: educational-os.iso
 
-OBJS = kernel/main.o kernel/pfa.o kernel/vmm.o kernel/heap.o
+OBJS = kernel/main.o kernel/pfa.o kernel/vmm.o kernel/heap.o \
+       kernel/gdt.o kernel/gdt_flush.o kernel/idt.o kernel/idt_stubs.o \
+       kernel/pic.o kernel/pit.o
 
-kernel/main.o: kernel/main.c kernel/pfa.h kernel/vmm.h kernel/heap.h tools/limine/limine.h
+kernel/main.o: kernel/main.c kernel/pfa.h kernel/vmm.h kernel/heap.h kernel/gdt.h kernel/idt.h kernel/pit.h tools/limine/limine.h
 	$(CC) $(CFLAGS) -c kernel/main.c -o kernel/main.o
 
 kernel/pfa.o: kernel/pfa.c kernel/pfa.h tools/limine/limine.h
@@ -21,6 +23,24 @@ kernel/vmm.o: kernel/vmm.c kernel/vmm.h kernel/pfa.h tools/limine/limine.h
 
 kernel/heap.o: kernel/heap.c kernel/heap.h kernel/vmm.h kernel/pfa.h
 	$(CC) $(CFLAGS) -c kernel/heap.c -o kernel/heap.o
+
+kernel/gdt.o: kernel/gdt.c kernel/gdt.h
+	$(CC) $(CFLAGS) -c kernel/gdt.c -o kernel/gdt.o
+
+kernel/gdt_flush.o: kernel/gdt_flush.S
+	$(CC) $(CFLAGS) -c kernel/gdt_flush.S -o kernel/gdt_flush.o
+
+kernel/idt.o: kernel/idt.c kernel/idt.h kernel/gdt.h kernel/pic.h
+	$(CC) $(CFLAGS) -c kernel/idt.c -o kernel/idt.o
+
+kernel/idt_stubs.o: kernel/idt_stubs.S
+	$(CC) $(CFLAGS) -c kernel/idt_stubs.S -o kernel/idt_stubs.o
+
+kernel/pic.o: kernel/pic.c kernel/pic.h
+	$(CC) $(CFLAGS) -c kernel/pic.c -o kernel/pic.o
+
+kernel/pit.o: kernel/pit.c kernel/pit.h kernel/pic.h kernel/idt.h
+	$(CC) $(CFLAGS) -c kernel/pit.c -o kernel/pit.o
 
 kernel/kernel.elf: $(OBJS) linker.ld
 	$(LD) $(LDFLAGS) -o kernel/kernel.elf $(OBJS)
