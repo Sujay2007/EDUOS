@@ -10,10 +10,23 @@ all: educational-os.iso
 
 OBJS = kernel/main.o kernel/pfa.o kernel/vmm.o kernel/heap.o \
        kernel/gdt.o kernel/gdt_flush.o kernel/idt.o kernel/idt_stubs.o \
-       kernel/pic.o kernel/pit.o
+       kernel/pic.o kernel/pit.o \
+       kernel/serial.o kernel/keyboard.o kernel/terminal.o kernel/shell.o
 
-kernel/main.o: kernel/main.c kernel/pfa.h kernel/vmm.h kernel/heap.h kernel/gdt.h kernel/idt.h kernel/pit.h tools/limine/limine.h
+kernel/main.o: kernel/main.c kernel/io.h kernel/serial.h kernel/pfa.h kernel/vmm.h kernel/heap.h kernel/gdt.h kernel/idt.h kernel/pit.h kernel/keyboard.h kernel/terminal.h kernel/shell.h tools/limine/limine.h
 	$(CC) $(CFLAGS) -c kernel/main.c -o kernel/main.o
+
+kernel/serial.o: kernel/serial.c kernel/serial.h kernel/io.h
+	$(CC) $(CFLAGS) -c kernel/serial.c -o kernel/serial.o
+
+kernel/keyboard.o: kernel/keyboard.c kernel/keyboard.h kernel/io.h kernel/pic.h kernel/idt.h kernel/serial.h
+	$(CC) $(CFLAGS) -c kernel/keyboard.c -o kernel/keyboard.o
+
+kernel/terminal.o: kernel/terminal.c kernel/terminal.h kernel/serial.h
+	$(CC) $(CFLAGS) -c kernel/terminal.c -o kernel/terminal.o
+
+kernel/shell.o: kernel/shell.c kernel/shell.h kernel/terminal.h kernel/keyboard.h kernel/pfa.h kernel/heap.h kernel/pit.h kernel/io.h kernel/idt.h
+	$(CC) $(CFLAGS) -c kernel/shell.c -o kernel/shell.o
 
 kernel/pfa.o: kernel/pfa.c kernel/pfa.h tools/limine/limine.h
 	$(CC) $(CFLAGS) -c kernel/pfa.c -o kernel/pfa.o

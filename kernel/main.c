@@ -25,64 +25,17 @@ volatile struct limine_hhdm_request hhdm_request = {
 __attribute__((used, section(".limine_requests_end")))
 static volatile LIMINE_REQUESTS_END_MARKER;
 
-static inline void outb(uint16_t port, uint8_t value) {
-    __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-static inline uint8_t inb(uint16_t port) {
-    uint8_t value;
-    __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
-static void serial_init(void) {
-    outb(0x3F9, 0x00);
-    outb(0x3FB, 0x80);
-    outb(0x3F8, 0x03);
-    outb(0x3F9, 0x00);
-    outb(0x3FB, 0x03);
-    outb(0x3FA, 0xC7);
-    outb(0x3FC, 0x0B);
-}
-
-void serial_putchar(char c) {
-    while ((inb(0x3FD) & 0x20) == 0) {
-    }
-    outb(0x3F8, (uint8_t)c);
-}
-
-void serial_write(const char *text) {
-    while (*text) {
-        serial_putchar(*text++);
-    }
-}
-
-void serial_write_hex64(uint64_t value) {
-    static const char hex_digits[] = "0123456789abcdef";
-    serial_write("0x");
-    for (int i = 60; i >= 0; i -= 4) {
-        serial_putchar(hex_digits[(value >> i) & 0xf]);
-    }
-}
-
-static void serial_write_dec(uint64_t value) {
-    char buf[21];
-    int idx = 0;
-
-    if (value == 0) {
-        serial_putchar('0');
-        return;
-    }
-
-    while (value > 0) {
-        buf[idx++] = (char)('0' + (value % 10));
-        value /= 10;
-    }
-
-    while (idx > 0) {
-        serial_putchar(buf[--idx]);
-    }
-}
+#include "io.h"
+#include "serial.h"
+#include "pfa.h"
+#include "vmm.h"
+#include "heap.h"
+#include "gdt.h"
+#include "idt.h"
+#include "pit.h"
+#include "keyboard.h"
+#include "terminal.h"
+#include "shell.h"
 
 static const char *memmap_type_to_string(uint64_t type) {
     switch (type) {
@@ -142,8 +95,6 @@ static void print_memory_map(void) {
         serial_write("\r\n");
     }
 }
-
-#include "pfa.h"
 
 static void print_pfa_stats(const char *label) {
     struct pfa_stats stats;
@@ -278,9 +229,6 @@ static void test_pfa(void) {
 
     print_pfa_stats("After Freeing All Test Pages");
 }
-
-#include "vmm.h"
-#include "heap.h"
 
 static void test_vmm(void) {
     serial_write("\r\n====================================================================\r\n");
@@ -541,10 +489,6 @@ static void test_heap(void) {
     print_heap_stats("Final State After All Frees");
 }
 
-#include "gdt.h"
-#include "idt.h"
-#include "pit.h"
-
 static volatile int breakpoint_handled = 0;
 
 static void custom_breakpoint_handler(struct interrupt_frame *frame) {
@@ -619,6 +563,14 @@ void _start(void) {
     test_gdt_idt_exceptions_and_timer();
 
     serial_write("\r\nAll milestone verifications completed successfully!\r\n");
+
+    /* Initialize keyboard driver, terminal abstraction, and shell */
+    keyboard_init();
+    terminal_init();
+    shell_init();
+
+    /* Launch interactive shell */
+    shell_run();
 
     for (;;) {
         __asm__ volatile ("hlt");
