@@ -29,7 +29,7 @@ def png_from_ppm(ppm, png):
     return width, height, pixels
 
 
-def main():
+def main(extra_checks=None):
     artifacts = pathlib.Path(tempfile.gettempdir()) / "eduos-graphics"
     artifacts.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="eduos-gfx-") as temporary:
@@ -72,9 +72,9 @@ def main():
 
             rpc("qmp_capabilities")
 
-            def prompt(start):
+            def receive(start, marker):
                 deadline = time.monotonic() + 45
-                while b"edus> " not in output[start:]:
+                while marker not in output[start:]:
                     require(time.monotonic() < deadline, "timeout waiting for shell")
                     for key, _ in selector.select(0.2):
                         data = key.fileobj.read1(8192)
@@ -82,13 +82,18 @@ def main():
                         output.extend(data)
                 return bytes(output[start:]).replace(b"\r", b"")
 
-            def command(text):
+            def prompt(start):
+                return receive(start, b"edus> ")
+
+            def command(text, wait=True):
                 start = len(output)
                 process.stdin.write(text.encode() + b"\n")
                 process.stdin.flush()
-                return prompt(start)
+                return prompt(start) if wait else start
 
             def screenshot(name):
+                # Serial is synchronous; framebuffer output is drained by a worker.
+                time.sleep(0.3)
                 ppm = artifacts / (name + ".ppm")
                 png = artifacts / (name + ".png")
                 rpc("screendump", {"filename": str(ppm)})
@@ -106,6 +111,7 @@ def main():
                 b"All User Mode & System Call Tests PASSED successfully!",
                 b"All Process Management & Address Space tests PASSED successfully!",
                 b"Filesystem tests PASSED.", b"[GFX] Limine framebuffer validated:",
+                b"[LIVE TEST] PASS:",
                 b"[GFX] Graphical terminal ready; keyboard focus: shell.",
             ):
                 require(marker in startup, f"missing result: {marker.decode()}")
@@ -157,6 +163,8 @@ def main():
             require(pixel(scrolled, 0, 0) == pixel(first, 0, 0) and
                     pixel(scrolled, 0, height - 1) == pixel(first, 0, height - 1),
                     "scroll damaged desktop chrome")
+            if extra_checks:
+                extra_checks(command, rpc, screenshot, pixel, prompt, receive)
             print("QEMU PASS: framebuffer, desktop, graphical prompt, clear, PS/2 input/backspace,")
             print("serial mirroring, persistent-file output, wrapping/scrolling; existing boot suites PASS")
         finally:

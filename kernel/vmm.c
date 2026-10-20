@@ -34,6 +34,34 @@ uint64_t vmm_get_kernel_pml4(void) {
     return kernel_pml4_phys;
 }
 
+int vmm_query_mapping(uint64_t root, uint64_t address, struct vmm_mapping *out) {
+    if (!out || !root || (root & ~PTE_ADDR_MASK) || !vmm_is_canonical(address)) return -1;
+    out->physical = out->page_size = out->flags = 0;
+    uint64_t permissions = PTE_PRESENT | PTE_USER | PTE_WRITABLE;
+    uint64_t table_phys = root;
+    for (int level = 4; level >= 1; level--) {
+        const uint64_t *table = vmm_phys_to_virt(table_phys);
+        if (!table) return -1;
+        unsigned shift = 12 + (level - 1) * 9;
+        uint64_t entry = table[(address >> shift) & 511];
+        if (!(entry & PTE_PRESENT)) return -1;
+        if (!(entry & PTE_USER)) permissions &= ~PTE_USER;
+        if (!(entry & PTE_WRITABLE)) permissions &= ~PTE_WRITABLE;
+        permissions |= entry & PTE_NX;
+        if (level == 1 || ((level == 2 || level == 3) && (entry & PTE_HUGE))) {
+            uint64_t size = 1ULL << shift;
+            out->physical = (entry & PTE_ADDR_MASK & ~(size - 1)) | (address & (size - 1));
+            out->page_size = size;
+            out->flags = permissions;
+            return 0;
+        }
+        if (level == 4 && (entry & PTE_HUGE)) return -1;
+        table_phys = entry & PTE_ADDR_MASK;
+        if (!table_phys) return -1;
+    }
+    return -1;
+}
+
 uint64_t vmm_get_current_pml4(void) {
     uint64_t cr3 = read_cr3();
     return cr3 & PTE_ADDR_MASK;

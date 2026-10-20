@@ -118,4 +118,13 @@ int vmm_map_page_pml4(uint64_t pml4_phys, uint64_t virt_addr, uint64_t phys_addr
 int vmm_unmap_page_pml4(uint64_t pml4_phys, uint64_t virt_addr);
 uint64_t vmm_virt_to_phys_pml4(uint64_t pml4_phys, uint64_t virt_addr, uint64_t *out_flags);
 
+struct vmm_mapping {
+    uint64_t physical, page_size, flags;
+};
+/* Bounded four-level query of a TRUSTED, live root owned by the kernel/process
+ * subsystem. Caller protects its lifetime against scheduling/destruction.
+ * Effective USER/RW/NX permissions include every level, including huge leaves.
+ * Returns 0 if present, -1 if absent/invalid. No allocation or address probing. */
+int vmm_query_mapping(uint64_t root, uint64_t address, struct vmm_mapping *out);
+
 #endif /* VMM_H */

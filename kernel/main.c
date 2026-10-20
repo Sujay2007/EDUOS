@@ -50,6 +50,7 @@ static volatile LIMINE_REQUESTS_END_MARKER;
 #include "process.h"
 #include "process_test.h"
 #include "fs.h"
+#include "live.h"
 
 static const char *memmap_type_to_string(uint64_t type) {
     switch (type) {
@@ -599,9 +600,11 @@ void _start(void) {
     /* Persistent storage is optional: a missing/corrupt disk leaves the shell usable. */
     storage_init();
     fs_test_all();
+    live_test_all();
 
     /* Initialize and launch interactive shell */
     terminal_init(); /* Enable framebuffer output after timing-sensitive boot tests. */
+    live_start();
     shell_init();
     shell_run();
 

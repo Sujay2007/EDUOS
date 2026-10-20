@@ -5,6 +5,7 @@
 #include "serial.h"
 #include "vmm.h"
 #include "process.h"
+#include "live.h"
 
 static struct thread *thread_list_head = NULL;
 static struct thread *current_thread = NULL;
@@ -327,6 +328,8 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
     if (!scheduler_active || current_thread == NULL) {
         return frame;
     }
+
+    live_observe_context(current_thread, vmm_get_current_pml4(), timer_get_ticks());
 
     /* 1. Reclaim any threads terminated in previous context switches */
     reclaim_dead_threads();

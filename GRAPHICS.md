@@ -23,14 +23,16 @@ serial character output path so existing diagnostics and commands that directly
 use serial output also appear graphically. It supports CR/LF, wrapping,
 scrolling, tabs, destructive backspace, a steady cursor, and the existing clear
 command's ANSI clear/home sequences. It is not a full ANSI/Unicode terminal.
-Character updates are serialized against interrupts on the existing single CPU.
+Task 9 defers graphical character updates to the live-view worker: serial writers
+only enqueue bytes, and one normal kernel thread owns terminal/panel rendering.
 The terminal has a bounded grid (up to 200 columns by 100 rows), with no heap
 allocation. Serial remains available when the QEMU display is hidden.
 
 A minimal keyboard-operated desktop surrounds one permanently focused terminal
 with a title bar and footer. The shell and keyboard driver are unchanged. There
-is no mouse driver, movable windows, compositor, launcher, OS visualization or
-application integration. Pointer input is deferred: the current driver supports
+is no mouse driver, movable windows, compositor, launcher or application
+integration. Task 9 adds the statistics panel described in `LIVE.md`.
+Pointer input is deferred: the current driver supports
 keyboard input only, and mouse support would require an additional PS/2 protocol
 and event path. `clear` clears terminal contents while preserving desktop chrome.
 

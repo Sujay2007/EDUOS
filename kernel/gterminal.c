@@ -1,6 +1,7 @@
 #include "graphics.h"
 #include "serial.h"
 #include "idt.h"
+#include "live.h"
 
 extern volatile struct limine_framebuffer_request framebuffer_request;
 static struct gfx_surface display;
@@ -15,6 +16,10 @@ static unsigned cols, rows, column, row, origin_x, origin_y;
 static unsigned escape, csi_length;
 static char csi_first;
 static int active;
+#define OUTPUT_CAPACITY 32768U
+static char output[OUTPUT_CAPACITY];
+static unsigned output_head, output_tail;
+static uint64_t output_drops;
 
 static void label(unsigned x, unsigned y, const char *text, uint32_t color) {
     while (*text) {
@@ -42,8 +47,23 @@ static void newline(void) {
     for (unsigned y = 0; y + 1 < rows; y++)
         for (unsigned x = 0; x < cols; x++) cells[y][x] = cells[y + 1][x];
     for (unsigned x = 0; x < cols; x++) cells[rows - 1][x] = ' ';
-    for (unsigned y = 0; y < rows; y++)
-        for (unsigned x = 0; x < cols; x++) render(x, y);
+    /* Copy only visible terminal pixels instead of re-rendering every glyph.
+     * Top-to-bottom is safe for this upward overlapping move. Pitch/padding and
+     * desktop/panel pixels stay untouched. This keeps live refresh responsive. */
+    unsigned bytes = cols * CW * display.bytes_per_pixel;
+    for (unsigned y = 0; y < (rows - 1) * CH; y++) {
+        volatile uint8_t *dst = display.pixels + (origin_y + y) * display.pitch +
+                                origin_x * display.bytes_per_pixel;
+        volatile uint8_t *src = dst + CH * display.pitch;
+        if (!((uintptr_t)dst & 3) && !((uintptr_t)src & 3) && !(bytes & 3)) {
+            volatile uint32_t *d = (volatile uint32_t *)dst;
+            const volatile uint32_t *s = (const volatile uint32_t *)src;
+            for (unsigned i = 0; i < bytes / 4; i++) d[i] = s[i];
+        } else {
+            for (unsigned i = 0; i < bytes; i++) dst[i] = src[i];
+        }
+    }
+    gfx_rect(&display, origin_x, origin_y + (rows - 1) * CH, cols * CW, CH, BG);
 }
 void gterminal_init(void) {
     struct limine_framebuffer_response *response = framebuffer_request.response;
@@ -57,11 +77,13 @@ void gterminal_init(void) {
     serial_write_dec(display.width); serial_write("x"); serial_write_dec(display.height);
     serial_write(" pitch="); serial_write_dec(display.pitch);
     serial_write(" bytes-per-pixel="); serial_write_dec(display.bytes_per_pixel); serial_write("\r\n");
-    cols = (display.width - 64) / CW;
+    unsigned full_cols = (display.width - 64) / CW;
+    unsigned panel_width = display.width >= 1000 ? 384 : display.width >= 800 ? 320 : 256;
+    cols = (display.width - 64 - panel_width) / CW;
     rows = (display.height - 144) / CH;
     if (cols > MAX_COLS) cols = MAX_COLS;
     if (rows > MAX_ROWS) rows = MAX_ROWS;
-    origin_x = (display.width - cols * CW) / 2;
+    origin_x = (display.width - full_cols * CW) / 2;
     origin_y = 100;
     gfx_clear(&display, 0x0a1220);
     gfx_rect(&display, 0, 0, display.width, 40, 0x1e3047);
@@ -70,14 +92,14 @@ void gterminal_init(void) {
     label(origin_x, 65, "Terminal / shell", FG);
     gfx_rect(&display, origin_x - 10, 90, cols * CW + 20, rows * CH + 20, BG);
     gfx_rect(&display, 0, display.height - 30, display.width, 30, 0x1e3047);
-    label(24, display.height - 23, "Keyboard + serial | help | clear", 0xa7bbcf);
+    label(24, display.height - 23, "Keyboard + serial | help | clear | live", 0xa7bbcf);
+    unsigned panel_x = origin_x + cols * CW + 24;
+    live_panel_attach(&display, panel_x, 58, display.width - panel_x - 24, display.height - 100);
     clear_text(); cursor();
     active = 1;
     serial_write("[GFX] Graphical terminal ready; keyboard focus: shell.\r\n");
 }
-void gterminal_putchar(char c) {
-    if (!active) return;
-    uint64_t flags = interrupts_save_and_disable();
+static void consume(char c) {
     render(column, row); /* Remove old cursor without destroying its character. */
     if (escape == 1) {
         escape = c == '[' ? 2 : 0;
@@ -107,5 +129,30 @@ void gterminal_putchar(char c) {
         if (++column == cols) newline();
     }
     cursor();
+}
+void gterminal_putchar(char c) {
+    if (!active) return;
+    /* Safe in IRQ/syscall context: no framebuffer access or formatting. */
+    uint64_t flags = interrupts_save_and_disable();
+    unsigned next = (output_head + 1) % OUTPUT_CAPACITY;
+    if (next == output_tail) output_drops++;
+    else { output[output_head] = c; output_head = next; }
     interrupts_restore(flags);
+}
+void gterminal_flush(void) {
+    if (!active) return;
+    for (unsigned n = 0; n < 128; n++) {
+        uint64_t flags = interrupts_save_and_disable();
+        if (output_tail == output_head) { interrupts_restore(flags); break; }
+        char c = output[output_tail];
+        output_tail = (output_tail + 1) % OUTPUT_CAPACITY;
+        interrupts_restore(flags);
+        consume(c); /* Only the live worker owns this rendering state. */
+    }
+}
+uint64_t gterminal_output_drops(void) {
+    uint64_t flags = interrupts_save_and_disable();
+    uint64_t count = output_drops;
+    interrupts_restore(flags);
+    return count;
 }

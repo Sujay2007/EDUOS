@@ -6,6 +6,14 @@
 #include <stddef.h>
 
 extern void user_exit_to_kernel(int exit_code);
+static struct syscall_stats activity;
+
+void syscall_get_stats(struct syscall_stats *out) {
+    if (!out) return;
+    uint64_t flags = interrupts_save_and_disable();
+    *out = activity;
+    interrupts_restore(flags);
+}
 
 int user_buffer_validate(const void *ptr, size_t len, int require_write) {
     if (len == 0) {
@@ -59,6 +67,19 @@ int user_buffer_validate(const void *ptr, size_t len, int require_write) {
 
 void syscall_handler(struct interrupt_frame *frame) {
     uint64_t sys_num = frame->rax;
+    /* Interrupt gate has IF clear: constant-time accounting only, no rendering. */
+    struct thread *caller = thread_get_current();
+    activity.total++;
+    activity.last_number = sys_num;
+    activity.last_tid = caller ? caller->tid : 0;
+    activity.last_pid = caller && caller->process ? caller->process->pid : 0;
+    switch (sys_num) {
+        case SYS_EXIT: activity.exits++; break;
+        case SYS_WRITE: activity.writes++; break;
+        case SYS_GETPID: activity.getpids++; break;
+        case SYS_YIELD: activity.yields++; break;
+        default: activity.unknown++; break;
+    }
 
     switch (sys_num) {
         case SYS_EXIT: {

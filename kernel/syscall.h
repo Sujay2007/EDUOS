@@ -53,4 +53,11 @@ void syscall_init(void);
  */
 void syscall_handler(struct interrupt_frame *frame);
 
+struct syscall_stats {
+    uint64_t total, exits, writes, getpids, yields, unknown;
+    uint64_t last_number;
+    uint32_t last_tid, last_pid;
+};
+void syscall_get_stats(struct syscall_stats *out);
+
 #endif /* SYSCALL_H */

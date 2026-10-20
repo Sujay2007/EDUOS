@@ -12,6 +12,7 @@
 #include "process_test.h"
 #include "usermode.h"
 #include "fs.h"
+#include "live.h"
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_PROMPT "edus> "
@@ -27,6 +28,8 @@ static int streq(const char *s1, const char *s2) {
 static void cmd_help(void) {
     terminal_writeln("Educational OS Shell - Available Commands:");
     terminal_writeln("  help          - Display this help information");
+    terminal_writeln("  live          - Dump the last displayed kernel-state snapshot");
+    terminal_writeln("  livecheck     - Verify live memory/process/syscall data with a temporary probe");
     terminal_writeln("  ls            - List files in the read-only root directory");
     terminal_writeln("  cat <name>    - Read a file from persistent storage");
     terminal_writeln("  fsinfo        - Show filesystem and block-device information");
@@ -608,7 +611,11 @@ static void execute_command(char *cmd_line) {
 
     const char *args = &cmd_line[i];
 
-    if (streq(cmd, "ls")) {
+    if (streq(cmd, "livecheck")) {
+        if (live_runtime_check() != 0) terminal_writeln("Live diagnostic FAILED.");
+    } else if (streq(cmd, "live")) {
+        live_dump();
+    } else if (streq(cmd, "ls")) {
         cmd_ls();
     } else if (streq(cmd, "cat")) {
         cmd_cat(args);
