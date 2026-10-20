@@ -130,4 +130,17 @@ void thread_print_table(void);
  */
 struct thread *thread_get_list_head(void);
 
+/*
+ * Verify internal scheduler invariants:
+ * - Exactly one thread is in THREAD_STATE_RUNNING state and matches current_thread.
+ * - All threads in thread_list_head have valid states (not TERMINATED).
+ * Returns 0 if all invariants hold, negative code otherwise.
+ */
+int scheduler_check_invariants(void);
+
+/*
+ * Get the total ticks spent running inside the idle thread.
+ */
+uint64_t scheduler_get_idle_ticks(void);
+
 #endif /* THREAD_H */

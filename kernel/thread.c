@@ -219,6 +219,7 @@ static struct thread *select_next_thread(void) {
      * Round-robin selection:
      * Search from current_thread->next to the end of list, then wrap to head.
      * Exclude idle_thread from regular round-robin search.
+     * Exclude current_thread to find another runnable thread.
      */
     struct thread *start = (current_thread != NULL && current_thread->next != NULL)
                                ? current_thread->next
@@ -226,7 +227,7 @@ static struct thread *select_next_thread(void) {
 
     struct thread *curr = start;
     while (curr != NULL) {
-        if (curr != idle_thread && curr->state == THREAD_STATE_READY) {
+        if (curr != idle_thread && curr != current_thread && curr->state == THREAD_STATE_READY) {
             return curr;
         }
         curr = curr->next;
@@ -234,15 +235,18 @@ static struct thread *select_next_thread(void) {
 
     curr = thread_list_head;
     while (curr != NULL && curr != start) {
-        if (curr != idle_thread && curr->state == THREAD_STATE_READY) {
+        if (curr != idle_thread && curr != current_thread && curr->state == THREAD_STATE_READY) {
             return curr;
         }
         curr = curr->next;
     }
 
-    /* If current thread is still runnable (not blocked/terminated), keep running it */
+    /*
+     * If current thread is still RUNNING (e.g. quantum expired on timer interrupt,
+     * but no other thread is READY), keep running current_thread without switching.
+     */
     if (current_thread != NULL && current_thread != idle_thread &&
-        (current_thread->state == THREAD_STATE_RUNNING || current_thread->state == THREAD_STATE_READY)) {
+        current_thread->state == THREAD_STATE_RUNNING) {
         return current_thread;
     }
 
@@ -298,6 +302,7 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
             current_thread->saved_frame = frame;
             struct thread *next = select_next_thread();
             if (next != current_thread) {
+                current_thread->state = THREAD_STATE_READY;
                 next->state = THREAD_STATE_RUNNING;
                 next->run_count++;
                 next->time_slice_ticks = SCHEDULER_QUANTUM_TICKS;
@@ -365,17 +370,23 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
 
         struct thread *next = select_next_thread();
 
-        next->state = THREAD_STATE_RUNNING;
-        next->run_count++;
-        next->time_slice_ticks = SCHEDULER_QUANTUM_TICKS;
-        sched_stats.total_switches++;
-        sched_stats.voluntary_yields++;
+        if (next != current_thread) {
+            next->state = THREAD_STATE_RUNNING;
+            next->run_count++;
+            next->time_slice_ticks = SCHEDULER_QUANTUM_TICKS;
+            sched_stats.total_switches++;
+            sched_stats.voluntary_yields++;
 
-        current_thread = next;
-        if (next->stack_base != NULL) {
-            gdt_set_kernel_stack((uint64_t)next->stack_base + next->stack_size);
+            current_thread = next;
+            if (next->stack_base != NULL) {
+                gdt_set_kernel_stack((uint64_t)next->stack_base + next->stack_size);
+            }
+            return next->saved_frame;
+        } else {
+            current_thread->state = THREAD_STATE_RUNNING;
+            sched_stats.voluntary_yields++;
+            return frame;
         }
-        return next->saved_frame;
     }
 
     return frame;
@@ -550,4 +561,47 @@ void thread_print_table(void) {
     }
 
     interrupts_restore(rflags);
+}
+
+int scheduler_check_invariants(void) {
+    if (!scheduler_active) {
+        return 0;
+    }
+
+    uint64_t rflags = interrupts_save_and_disable();
+
+    uint32_t running_count = 0;
+    struct thread *running_ptr = NULL;
+
+    struct thread *curr = thread_list_head;
+    while (curr != NULL) {
+        if (curr->state == THREAD_STATE_RUNNING) {
+            running_count++;
+            running_ptr = curr;
+        } else if (curr->state == THREAD_STATE_TERMINATED) {
+            interrupts_restore(rflags);
+            return -2; /* Active thread list must never contain TERMINATED threads */
+        }
+        curr = curr->next;
+    }
+
+    if (running_count != 1) {
+        interrupts_restore(rflags);
+        return -1; /* Exactly one thread must be RUNNING at all times */
+    }
+
+    if (running_ptr != current_thread) {
+        interrupts_restore(rflags);
+        return -3; /* The single RUNNING thread must match current_thread */
+    }
+
+    interrupts_restore(rflags);
+    return 0;
+}
+
+uint64_t scheduler_get_idle_ticks(void) {
+    if (idle_thread != NULL) {
+        return idle_thread->total_ticks;
+    }
+    return 0;
 }

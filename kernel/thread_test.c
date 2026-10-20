@@ -96,6 +96,10 @@ int thread_test_all(void) {
     }
 
     serial_write("  Worker thread executed successfully (entry called).\r\n");
+    if (scheduler_check_invariants() != 0) {
+        serial_write("  [FAIL] Scheduler invariant violation after Test 1!\r\n");
+        return -1;
+    }
     serial_write("  [PASS] Thread creation, execution, and return trampoline verified!\r\n");
 
     /* ------------------------------------------------------------- */
@@ -124,10 +128,10 @@ int thread_test_all(void) {
     serial_write_dec(coop_b_count);
     serial_write("\r\n");
 
-    if (coop_a_count == 5 && coop_b_count == 5) {
+    if (coop_a_count == 5 && coop_b_count == 5 && scheduler_check_invariants() == 0) {
         serial_write("  [PASS] Cooperative multitasking verified!\r\n");
     } else {
-        serial_write("  [FAIL] Counter mismatch in cooperative threads!\r\n");
+        serial_write("  [FAIL] Counter mismatch or invariant violation in cooperative threads!\r\n");
         return -2;
     }
 
@@ -172,10 +176,11 @@ int thread_test_all(void) {
     serial_write("\r\n");
 
     if (preempt_a_done && preempt_b_done &&
-        (stats_after.timer_preemptions > stats_before.timer_preemptions)) {
+        (stats_after.timer_preemptions > stats_before.timer_preemptions) &&
+        scheduler_check_invariants() == 0) {
         serial_write("  [PASS] Genuine timer-driven preemption verified!\r\n");
     } else {
-        serial_write("  [FAIL] Preemption test did not record timer preemptions!\r\n");
+        serial_write("  [FAIL] Preemption test did not record timer preemptions or violated invariants!\r\n");
         return -3;
     }
 
@@ -201,11 +206,14 @@ int thread_test_all(void) {
         serial_write("  Sleeper thread state confirmed: BLOCKED (not consuming CPU)\r\n");
     }
 
+    uint64_t idle_ticks_before = scheduler_get_idle_ticks();
+
     /* Wait for sleeper to wake up and finish */
     while (!sleeper_done) {
         thread_yield();
     }
 
+    uint64_t idle_ticks_after = scheduler_get_idle_ticks();
     uint64_t elapsed_ticks = sleep_end_ticks - sleep_start_ticks;
     serial_write("  Sleeper start tick: ");
     serial_write_dec(sleep_start_ticks);
@@ -215,10 +223,14 @@ int thread_test_all(void) {
     serial_write_dec(elapsed_ticks);
     serial_write(" ticks)\r\n");
 
-    if (elapsed_ticks >= 15) {
-        serial_write("  [PASS] Timed sleep and wake-up deadline verified!\r\n");
+    serial_write("  Idle thread ticks during sleep: ");
+    serial_write_dec(idle_ticks_after - idle_ticks_before);
+    serial_write("\r\n");
+
+    if (elapsed_ticks >= 15 && idle_ticks_after > idle_ticks_before && scheduler_check_invariants() == 0) {
+        serial_write("  [PASS] Timed sleep, deadline wake-up, and idle-thread execution verified!\r\n");
     } else {
-        serial_write("  [FAIL] Sleeper woke up prematurely!\r\n");
+        serial_write("  [FAIL] Sleeper woke up prematurely, idle did not run, or invariant failed!\r\n");
         return -4;
     }
 
@@ -237,14 +249,33 @@ int thread_test_all(void) {
     serial_write_dec(final_stats.voluntary_yields);
     serial_write("\r\n  Active Threads Count   : ");
     serial_write_dec(final_stats.active_threads);
+    serial_write("\r\n  Running Threads Count  : ");
+    serial_write_dec(final_stats.running_threads);
+    serial_write("\r\n  Ready Threads Count    : ");
+    serial_write_dec(final_stats.ready_threads);
     serial_write("\r\n");
 
-    if (final_stats.total_switches > 0 && final_stats.timer_preemptions > 0) {
-        serial_write("  [PASS] Scheduler counters reflect real execution!\r\n");
-    } else {
+    if (scheduler_check_invariants() != 0) {
+        serial_write("  [FAIL] Invariant check failed: running_threads != 1!\r\n");
+        return -5;
+    }
+
+    if (final_stats.running_threads != 1) {
+        serial_write("  [FAIL] Multiple or zero threads marked RUNNING!\r\n");
+        return -5;
+    }
+
+    if (final_stats.total_switches == 0 || final_stats.timer_preemptions == 0) {
         serial_write("  [FAIL] Scheduler counters invalid!\r\n");
         return -5;
     }
+
+    if (final_stats.voluntary_yields > 500) {
+        serial_write("  [FAIL] Excessive runaway voluntary yields detected!\r\n");
+        return -5;
+    }
+
+    serial_write("  [PASS] Exactly one thread RUNNING verified; scheduler metrics reflect real execution!\r\n");
 
     serial_write("\r\n====================================================================\r\n");
     serial_write("All Kernel Multitasking & Scheduler Tests PASSED successfully!\r\n");
