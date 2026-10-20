@@ -11,6 +11,7 @@
 #include "process.h"
 #include "process_test.h"
 #include "usermode.h"
+#include "fs.h"
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_PROMPT "edus> "
@@ -26,6 +27,9 @@ static int streq(const char *s1, const char *s2) {
 static void cmd_help(void) {
     terminal_writeln("Educational OS Shell - Available Commands:");
     terminal_writeln("  help          - Display this help information");
+    terminal_writeln("  ls            - List files in the read-only root directory");
+    terminal_writeln("  cat <name>    - Read a file from persistent storage");
+    terminal_writeln("  fsinfo        - Show filesystem and block-device information");
     terminal_writeln("  clear         - Clear the terminal screen");
     terminal_writeln("  mem           - Display physical memory allocator (PFA) statistics");
     terminal_writeln("  heap          - Display dynamic kernel heap statistics");
@@ -529,6 +533,60 @@ static void cmd_reboot(void) {
     }
 }
 
+static void cmd_ls(void) {
+    struct filesystem *fs = fs_root();
+    if (!fs->mounted) { terminal_writeln("Filesystem unavailable."); return; }
+    struct fs_entry entry;
+    for (uint32_t i = 0; fs_list(fs, i, &entry) == FS_OK; i++) {
+        terminal_write(entry.name); terminal_write("  ");
+        terminal_write_dec(entry.size); terminal_writeln(" bytes");
+    }
+}
+
+static void cmd_fsinfo(void) {
+    struct filesystem *fs = fs_root();
+    if (!fs->mounted) { terminal_writeln("Filesystem unavailable (missing disk or invalid EDUFS)."); return; }
+    terminal_writeln("EDUFS v1: read-only, flat root directory");
+    terminal_write("Device: "); terminal_writeln(fs->device->name);
+    terminal_write("Block size: "); terminal_write_dec(BLOCK_SIZE); terminal_writeln(" bytes");
+    terminal_write("Device sectors: "); terminal_write_dec(fs->device->sectors); terminal_putchar('\n');
+    terminal_write("Filesystem sectors: "); terminal_write_dec(fs->sectors); terminal_putchar('\n');
+    terminal_write("Files: "); terminal_write_dec(fs->count); terminal_putchar('\n');
+}
+
+static void cmd_cat(const char *args) {
+    while (*args == ' ' || *args == '\t') args++;
+    char name[FS_NAME_BYTES];
+    size_t n = 0;
+    while (*args && *args != ' ' && *args != '\t') {
+        if (n + 1 >= sizeof(name)) { terminal_writeln("Invalid filename (maximum 31 bytes)."); return; }
+        name[n++] = *args++;
+    }
+    name[n] = 0;
+    while (*args == ' ' || *args == '\t') args++;
+    if (!n || *args) { terminal_writeln("Usage: cat <name>"); return; }
+    struct filesystem *fs = fs_root();
+    uint32_t index;
+    int result = fs_lookup(fs, name, &index);
+    if (result != FS_OK) {
+        terminal_writeln(result == FS_INVALID ? "Invalid filename." :
+                         result == FS_UNMOUNTED ? "Filesystem unavailable." : "File not found.");
+        return;
+    }
+    char buf[128]; size_t got; uint64_t offset = 0;
+    char last = '\n';
+    for (;;) {
+        if (fs_read(fs, index, offset, buf, sizeof(buf), &got) != FS_OK) {
+            terminal_writeln("File read failed."); return;
+        }
+        if (!got) break;
+        for (size_t i = 0; i < got; i++) terminal_putchar(buf[i]);
+        last = buf[got - 1];
+        offset += got;
+    }
+    if (last != '\n') terminal_putchar('\n');
+}
+
 static void execute_command(char *cmd_line) {
     /* Skip leading spaces */
     while (*cmd_line == ' ' || *cmd_line == '\t') {
@@ -550,7 +608,13 @@ static void execute_command(char *cmd_line) {
 
     const char *args = &cmd_line[i];
 
-    if (streq(cmd, "help")) {
+    if (streq(cmd, "ls")) {
+        cmd_ls();
+    } else if (streq(cmd, "cat")) {
+        cmd_cat(args);
+    } else if (streq(cmd, "fsinfo")) {
+        cmd_fsinfo();
+    } else if (streq(cmd, "help")) {
         cmd_help();
     } else if (streq(cmd, "clear")) {
         cmd_clear();

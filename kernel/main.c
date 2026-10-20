@@ -42,6 +42,7 @@ static volatile LIMINE_REQUESTS_END_MARKER;
 #include "usermode.h"
 #include "process.h"
 #include "process_test.h"
+#include "fs.h"
 
 static const char *memmap_type_to_string(uint64_t type) {
     switch (type) {
@@ -588,6 +589,10 @@ void _start(void) {
 
     /* Run process management, isolation, and protection verification suite */
     process_test_all();
+
+    /* Persistent storage is optional: a missing/corrupt disk leaves the shell usable. */
+    storage_init();
+    fs_test_all();
 
     /* Initialize and launch interactive shell */
     shell_init();

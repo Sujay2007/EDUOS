@@ -1,0 +1,1 @@
+Hello from persistent virtual-disk storage!

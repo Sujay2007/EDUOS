@@ -6,7 +6,7 @@ LDFLAGS = -nostdlib -static -z max-page-size=0x1000 -T linker.ld
 
 .PHONY: all clean run
 
-all: educational-os.iso
+all: educational-os.iso disk.img
 
 OBJS = kernel/main.o kernel/pfa.o kernel/vmm.o kernel/heap.o \
        kernel/gdt.o kernel/gdt_flush.o kernel/idt.o kernel/idt_stubs.o \
@@ -14,7 +14,22 @@ OBJS = kernel/main.o kernel/pfa.o kernel/vmm.o kernel/heap.o \
        kernel/serial.o kernel/keyboard.o kernel/terminal.o kernel/shell.o \
        kernel/thread.o kernel/thread_test.o \
        kernel/syscall.o kernel/usermode.o kernel/usermode_entry.o \
-       kernel/process.o kernel/process_test.o kernel/process_test_blobs.o
+       kernel/process.o kernel/process_test.o kernel/process_test_blobs.o \
+       kernel/block.o kernel/ata.o kernel/fs.o kernel/fs_test.o
+
+kernel/block.o: kernel/block.c kernel/block.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/ata.o: kernel/ata.c kernel/block.h kernel/io.h kernel/idt.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/fs.o: kernel/fs.c kernel/fs.h kernel/block.h kernel/serial.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/fs_test.o: kernel/fs_test.c kernel/fs.h kernel/block.h kernel/serial.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/main.o kernel/shell.o: kernel/fs.h kernel/block.h
 
 kernel/main.o: kernel/main.c kernel/io.h kernel/serial.h kernel/pfa.h kernel/vmm.h kernel/heap.h kernel/gdt.h kernel/idt.h kernel/pit.h kernel/keyboard.h kernel/terminal.h kernel/shell.h kernel/thread.h kernel/thread_test.h kernel/syscall.h kernel/usermode.h kernel/process.h kernel/process_test.h tools/limine/limine.h
 	$(CC) $(CFLAGS) -c kernel/main.c -o kernel/main.o
@@ -98,8 +113,14 @@ educational-os.iso: kernel/kernel.elf limine.conf
 		--protective-msdos-label iso_root -o educational-os.iso
 	tools/limine/limine bios-install educational-os.iso
 
-run: educational-os.iso
-	qemu-system-x86_64 -M q35 -m 256M -cdrom educational-os.iso -boot d -serial stdio -display none
+disk.img:
+	python3 tools/mkfs.py $@ samples
+
+run: educational-os.iso disk.img
+	qemu-system-x86_64 -M q35 -m 256M -cdrom educational-os.iso -boot d -serial stdio -display none \
+		-device piix3-ide,id=eduide \
+		-drive if=none,id=edudisk,file=disk.img,format=raw \
+		-device ide-hd,drive=edudisk,bus=eduide.0
 
 clean:
 	rm -f $(OBJS) kernel/kernel.elf educational-os.iso
