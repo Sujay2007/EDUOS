@@ -10,6 +10,8 @@
 #define IDT_ATTR_TRAP_GATE      0x8F /* Present, DPL 0, 64-bit Trap Gate */
 #define IDT_ATTR_USER_GATE      0xEE /* Present, DPL 3, 64-bit Interrupt Gate */
 
+#define SYSCALL_VECTOR          128  /* Vector 0x80 for user-mode system calls */
+
 /*
  * 64-bit Interrupt Descriptor Entry
  */

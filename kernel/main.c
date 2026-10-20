@@ -38,6 +38,8 @@ static volatile LIMINE_REQUESTS_END_MARKER;
 #include "shell.h"
 #include "thread.h"
 #include "thread_test.h"
+#include "syscall.h"
+#include "usermode.h"
 
 static const char *memmap_type_to_string(uint64_t type) {
     switch (type) {
@@ -575,6 +577,9 @@ void _start(void) {
 
     /* Run kernel multitasking and preemption verification suite */
     thread_test_all();
+
+    /* Run user mode and system call verification suite */
+    usermode_test_all();
 
     /* Initialize and launch interactive shell */
     shell_init();

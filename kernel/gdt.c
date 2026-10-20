@@ -72,6 +72,10 @@ void gdt_set_kernel_stack(uint64_t stack_top) {
     tss.rsp0 = stack_top;
 }
 
+uint64_t gdt_get_kernel_stack(void) {
+    return tss.rsp0;
+}
+
 void gdt_init(void) {
     /* 1. Null descriptor */
     set_gdt_entry(&gdt.null_desc, 0, 0, 0, 0);

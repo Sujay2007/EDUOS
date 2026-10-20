@@ -7,6 +7,7 @@
 #include "io.h"
 #include "idt.h"
 #include "thread.h"
+#include "usermode.h"
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_PROMPT "edus> "
@@ -31,6 +32,7 @@ static void cmd_help(void) {
     terminal_writeln("  sched         - Display scheduler execution metrics and context switches");
     terminal_writeln("  yield         - Voluntarily yield the CPU to another thread");
     terminal_writeln("  sleep <ticks> - Block current thread for specified timer ticks");
+    terminal_writeln("  usertest      - Execute Ring 3 user mode & system call test suite");
     terminal_writeln("  about         - Display educational OS system information");
     terminal_writeln("  reboot        - Reboot the computer");
 }
@@ -241,6 +243,17 @@ static void cmd_about(void) {
     terminal_writeln("    - PS/2 Keyboard Driver & UART Serial Driver");
     terminal_writeln("    - Preemptive Multitasking & Round-Robin Scheduler");
     terminal_writeln("    - Interactive Terminal & Command Shell");
+    terminal_writeln("    - User Mode (Ring 3) & System Call Interface");
+}
+
+static void cmd_usertest(void) {
+    terminal_writeln("Running User Mode (Ring 3) and System Call verification suite...");
+    int res = usermode_test_all();
+    if (res == 0) {
+        terminal_writeln("User mode tests PASSED successfully!");
+    } else {
+        terminal_writeln("User mode tests FAILED!");
+    }
 }
 
 static void cmd_reboot(void) {
@@ -309,6 +322,8 @@ static void execute_command(char *cmd_line) {
         cmd_yield();
     } else if (streq(cmd, "sleep")) {
         cmd_sleep(args);
+    } else if (streq(cmd, "usertest") || streq(cmd, "ring3")) {
+        cmd_usertest();
     } else if (streq(cmd, "about")) {
         cmd_about();
     } else if (streq(cmd, "reboot")) {

@@ -10,6 +10,9 @@
 #define GDT_USER_CODE_SEL   0x20
 #define GDT_TSS_SEL         0x28
 
+#define GDT_USER_DATA_RPL3  (GDT_USER_DATA_SEL | 3) /* 0x1B */
+#define GDT_USER_CODE_RPL3  (GDT_USER_CODE_SEL | 3) /* 0x23 */
+
 /*
  * 64-bit Task State Segment (TSS) structure
  */
@@ -48,5 +51,10 @@ void gdt_init(void);
  * Update RSP0 in the TSS (used for future multitasking / user-mode transitions).
  */
 void gdt_set_kernel_stack(uint64_t stack_top);
+
+/*
+ * Get the currently configured RSP0 in the TSS.
+ */
+uint64_t gdt_get_kernel_stack(void);
 
 #endif /* GDT_H */

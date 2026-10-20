@@ -52,15 +52,19 @@ int vmm_init(void) {
 /*
  * Helper to get or create the next-level table.
  * If create is 1 and the entry is absent, allocates a new frame from PFA, zeroes it,
- * and populates the entry with (frame_phys | PTE_PRESENT | PTE_WRITABLE).
+ * and populates the entry with (frame_phys | PTE_PRESENT | PTE_WRITABLE [| PTE_USER]).
  */
-static uint64_t *get_next_level(uint64_t *table, uint64_t index, int create) {
+static uint64_t *get_next_level(uint64_t *table, uint64_t index, int create, uint64_t flags) {
     uint64_t entry = table[index];
 
     if (entry & PTE_PRESENT) {
         /* Large/Huge pages (1 GiB or 2 MiB) at intermediate levels cannot be walked down to 4 KiB */
         if (entry & PTE_HUGE) {
             return NULL;
+        }
+        /* If mapping a user page, ensure intermediate table allows user access */
+        if (flags & PTE_USER) {
+            table[index] |= PTE_USER;
         }
         uint64_t next_table_phys = entry & PTE_ADDR_MASK;
         return (uint64_t *)vmm_phys_to_virt(next_table_phys);
@@ -90,7 +94,11 @@ static uint64_t *get_next_level(uint64_t *table, uint64_t index, int create) {
      * Set intermediate entry permissions to Present + Writable.
      * Leaf permissions (PTE) will govern the final permissions.
      */
-    table[index] = new_table_phys | PTE_PRESENT | PTE_WRITABLE;
+    uint64_t entry_flags = PTE_PRESENT | PTE_WRITABLE;
+    if (flags & PTE_USER) {
+        entry_flags |= PTE_USER;
+    }
+    table[index] = new_table_phys | entry_flags;
 
     return new_table_virt;
 }
@@ -102,6 +110,13 @@ int vmm_map_page(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags) {
 
     if (!vmm_is_canonical(virt_addr)) {
         return -1;
+    }
+
+    if (flags & PTE_USER) {
+        /* User mappings must strictly reside in lower canonical address space (< 0x0000800000000000) */
+        if (virt_addr >= 0x0000800000000000ULL) {
+            return -1;
+        }
     }
 
     if (kernel_pml4_phys == 0) {
@@ -118,17 +133,17 @@ int vmm_map_page(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags) {
     uint64_t pd_i   = PD_INDEX(virt_addr);
     uint64_t pt_i   = PT_INDEX(virt_addr);
 
-    uint64_t *pdpt = get_next_level(pml4, pml4_i, 1);
+    uint64_t *pdpt = get_next_level(pml4, pml4_i, 1, flags);
     if (pdpt == NULL) {
         return -3;
     }
 
-    uint64_t *pd = get_next_level(pdpt, pdpt_i, 1);
+    uint64_t *pd = get_next_level(pdpt, pdpt_i, 1, flags);
     if (pd == NULL) {
         return -3;
     }
 
-    uint64_t *pt = get_next_level(pd, pd_i, 1);
+    uint64_t *pt = get_next_level(pd, pd_i, 1, flags);
     if (pt == NULL) {
         return -3;
     }
@@ -167,17 +182,17 @@ int vmm_unmap_page(uint64_t virt_addr) {
     uint64_t pd_i   = PD_INDEX(virt_addr);
     uint64_t pt_i   = PT_INDEX(virt_addr);
 
-    uint64_t *pdpt = get_next_level(pml4, pml4_i, 0);
+    uint64_t *pdpt = get_next_level(pml4, pml4_i, 0, 0);
     if (pdpt == NULL) {
         return -2;
     }
 
-    uint64_t *pd = get_next_level(pdpt, pdpt_i, 0);
+    uint64_t *pd = get_next_level(pdpt, pdpt_i, 0, 0);
     if (pd == NULL) {
         return -2;
     }
 
-    uint64_t *pt = get_next_level(pd, pd_i, 0);
+    uint64_t *pt = get_next_level(pd, pd_i, 0, 0);
     if (pt == NULL) {
         return -2;
     }
@@ -207,17 +222,17 @@ uint64_t vmm_virt_to_phys(uint64_t virt_addr, uint64_t *out_flags) {
     uint64_t pd_i   = PD_INDEX(virt_addr);
     uint64_t pt_i   = PT_INDEX(virt_addr);
 
-    uint64_t *pdpt = get_next_level(pml4, pml4_i, 0);
+    uint64_t *pdpt = get_next_level(pml4, pml4_i, 0, 0);
     if (pdpt == NULL) {
         return 0;
     }
 
-    uint64_t *pd = get_next_level(pdpt, pdpt_i, 0);
+    uint64_t *pd = get_next_level(pdpt, pdpt_i, 0, 0);
     if (pd == NULL) {
         return 0;
     }
 
-    uint64_t *pt = get_next_level(pd, pd_i, 0);
+    uint64_t *pt = get_next_level(pd, pd_i, 0, 0);
     if (pt == NULL) {
         return 0;
     }

@@ -71,6 +71,7 @@ ISR_NOERRCODE 45  # IRQ13: FPU
 ISR_NOERRCODE 46  # IRQ14: Primary ATA
 ISR_NOERRCODE 47  # IRQ15: Secondary ATA
 ISR_NOERRCODE 48  # Vector 48: Scheduler Yield / Software Interrupt
+ISR_NOERRCODE 128 # Vector 128 (0x80): System Call Entry
 
 # Common ISR stub
 .extern isr_dispatch

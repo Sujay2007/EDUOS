@@ -61,6 +61,9 @@ extern void isr_stub_45(void);
 extern void isr_stub_46(void);
 extern void isr_stub_47(void);
 extern void isr_stub_48(void);
+extern void isr_stub_128(void);
+
+extern void user_fault_handler(struct interrupt_frame *frame);
 
 static const char *exception_messages[32] = {
     "Divide-by-zero Error",
@@ -126,6 +129,12 @@ struct interrupt_frame *isr_dispatch(struct interrupt_frame *frame) {
     if (vec < IDT_ENTRIES && isr_handlers[vec] != NULL) {
         isr_handlers[vec](frame);
     } else if (vec < 32) {
+        if ((frame->cs & 3) == 3) {
+            /* Handled user-mode exception cleanly without crashing kernel */
+            user_fault_handler(frame);
+            return frame;
+        }
+
         /* If unhandled CPU exception (0..31), print diagnostic and halt safely */
         serial_write("\r\n====================================================================\r\n");
         serial_write("!!! CPU EXCEPTION OCCURRED !!!\r\n");
@@ -212,6 +221,9 @@ void idt_init(void) {
 
     /* Install Software Yield / Scheduling Gate (Vector 48) */
     idt_set_gate(48, isr_stub_48, 0, IDT_ATTR_INTERRUPT_GATE);
+
+    /* Install System Call Gate (Vector 128 / 0x80) with DPL 3 */
+    idt_set_gate(SYSCALL_VECTOR, isr_stub_128, 0, IDT_ATTR_USER_GATE);
 
     /* Remap PIC to vector 32 (IRQ 0..7) and 40 (IRQ 8..15), and mask all IRQs initially */
     pic_remap(32, 40);
