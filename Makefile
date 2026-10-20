@@ -4,7 +4,7 @@ LD = ld.lld
 CFLAGS = -target x86_64-unknown-none-elf -std=gnu11 -O2 -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mcmodel=kernel -Itools/limine
 LDFLAGS = -nostdlib -static -z max-page-size=0x1000 -T linker.ld
 
-.PHONY: all clean run run-graphics test-graphics test-live
+.PHONY: all clean run run-graphics test-graphics test-live test-final
 
 all: educational-os.iso disk.img
 
@@ -16,7 +16,18 @@ OBJS = kernel/main.o kernel/pfa.o kernel/vmm.o kernel/heap.o \
        kernel/syscall.o kernel/usermode.o kernel/usermode_entry.o \
        kernel/process.o kernel/process_test.o kernel/process_test_blobs.o \
        kernel/block.o kernel/ata.o kernel/fs.o kernel/fs_test.o \
-       kernel/graphics.o kernel/font.o kernel/gterminal.o kernel/live.o kernel/live_panel.o kernel/live_probe.o
+       kernel/graphics.o kernel/font.o kernel/gterminal.o kernel/live.o kernel/live_panel.o kernel/live_probe.o \
+       kernel/apps.o kernel/apps_blobs.o
+
+kernel/apps.o: kernel/apps.c kernel/apps.h kernel/process.h kernel/thread.h kernel/vmm.h kernel/pfa.h kernel/pit.h kernel/serial.h kernel/syscall.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/apps_blobs.o: kernel/apps_blobs.S
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/shell.o: kernel/apps.h
+kernel/syscall.o: kernel/fs.h kernel/block.h kernel/graphics.h
+kernel/live.o kernel/live_panel.o kernel/gterminal.o kernel/thread.o: kernel/syscall.h kernel/graphics.h
 
 kernel/live_probe.o: kernel/live_probe.S
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -160,3 +171,6 @@ test-graphics: all
 
 test-live: all
 	python3 tools/test_live.py
+
+test-final: all
+	python3 tools/test_final.py

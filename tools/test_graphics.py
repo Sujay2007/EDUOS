@@ -50,10 +50,14 @@ def main(extra_checks=None):
         qmp = socket.socket(socket.AF_UNIX)
         try:
             deadline = time.monotonic() + 10
-            while not path.exists():
+            while True:
                 require(process.poll() is None and time.monotonic() < deadline, "QMP startup failed")
-                time.sleep(0.02)
-            qmp.connect(str(path))
+                try:
+                    qmp.connect(str(path))
+                    break
+                except (FileNotFoundError, ConnectionRefusedError):
+                    # QEMU may create the Unix socket just before listen() is ready.
+                    time.sleep(0.02)
             qmp.settimeout(10)
             stream = qmp.makefile("rb")
             require("QMP" in json.loads(stream.readline()), "QMP greeting missing")
@@ -85,15 +89,20 @@ def main(extra_checks=None):
             def prompt(start):
                 return receive(start, b"edus> ")
 
-            def command(text, wait=True):
+            def command(text, wait=True, keyboard=False):
                 start = len(output)
-                process.stdin.write(text.encode() + b"\n")
-                process.stdin.flush()
+                if keyboard:
+                    for ch in text:
+                        key({" ": "spc", ".": "dot", "-": "minus", "/": "slash"}.get(ch, ch))
+                    key("ret")
+                else:
+                    process.stdin.write(text.encode() + b"\n")
+                    process.stdin.flush()
                 return prompt(start) if wait else start
 
-            def screenshot(name):
+            def screenshot(name, settle=0.3):
                 # Serial is synchronous; framebuffer output is drained by a worker.
-                time.sleep(0.3)
+                time.sleep(settle)
                 ppm = artifacts / (name + ".ppm")
                 png = artifacts / (name + ".png")
                 rpc("screendump", {"filename": str(ppm)})

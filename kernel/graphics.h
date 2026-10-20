@@ -21,4 +21,11 @@ void gfx_glyph(struct gfx_surface *s, int64_t x, int64_t y, unsigned char ch,
                uint32_t fg, uint32_t bg, unsigned scale);
 void gterminal_init(void);
 void gterminal_putchar(char c);
+
+#define APP_CANVAS_WIDTH 192U
+#define APP_CANVAS_HEIGHT 24U
+struct app_canvas_rect { uint32_t x, y, width, height, rgb; };
+/* Queue a bounded top-bar canvas operation; never render in syscall context.
+ * 0 success, -1 no display, -2 invalid rectangle, -3 queue full. */
+int gterminal_canvas_submit(const struct app_canvas_rect *rect);
 #endif

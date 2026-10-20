@@ -149,7 +149,8 @@ int live_test_all(void) {
     ok &= before.current_tid == current->tid && before.root == vmm_get_current_pml4();
     ok &= before.memory.usable_pages == before.memory.allocated_pages + before.memory.free_pages;
     ok &= before.syscalls.total > 0 && before.syscalls.total == before.syscalls.exits + before.syscalls.writes +
-          before.syscalls.getpids + before.syscalls.yields + before.syscalls.unknown;
+          before.syscalls.getpids + before.syscalls.yields + before.syscalls.unknown +
+          before.syscalls.reads + before.syscalls.lists + before.syscalls.draws + before.syscalls.sleeps;
     uint64_t frame = pfa_alloc_page();
     live_collect(&during);
     ok &= frame && during.memory.free_pages + 1 == before.memory.free_pages &&

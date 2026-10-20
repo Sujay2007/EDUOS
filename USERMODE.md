@@ -88,7 +88,7 @@ System call entry uses an IDT interrupt gate on Vector `128` (`0x80`) configured
 | :--- | :--- | :--- | :--- |
 | `1` | `SYS_EXIT` | `rdi`: `int status` | Terminates the user task cleanly and returns control to the kernel. |
 | `2` | `SYS_WRITE` | `rdi`: `int fd`, `rsi`: `const char *buf`, `rdx`: `size_t count` | Validates buffer and outputs string to serial terminal (stdout=1, stderr=2). |
-| `3` | `SYS_GETPID`| None | Returns current task/thread TID. |
+| `3` | `SYS_GETPID`| None | Returns the current process PID (0 for legacy single-shot tests). |
 | `4` | `SYS_YIELD` | None | Voluntarily yields CPU slice to scheduler. |
 
 ### Return Error Codes
@@ -129,5 +129,5 @@ The kernel includes an automated 3-phase verification suite executed during boot
 
 ## 5. Limitations & Future Milestones
 
-- **Single Shared PML4**: Currently, user pages are mapped into the lower half of the active PML4 table and cleaned up after execution. Future milestones will introduce isolated, per-process PML4 page tables and an ELF loader.
+- **Process address spaces**: Normal processes and Task 10 applications use private lower-half PML4 trees with shared supervisor-only kernel mappings. The single-shot tests described above still temporarily map pages in the kernel root. A general ELF loader is not implemented. See `APPLICATIONS.md` for the final application workflow and calls 5–8.
 - **Interrupt Gate vs SYSCALL/SYSRET**: System calls currently use `int $0x80` with an interrupt gate. Future optimization can add MSR-based `SYSCALL`/`SYSRETQ` fast paths.

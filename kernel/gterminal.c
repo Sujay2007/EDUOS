@@ -20,6 +20,9 @@ static int active;
 static char output[OUTPUT_CAPACITY];
 static unsigned output_head, output_tail;
 static uint64_t output_drops;
+#define CANVAS_QUEUE_SIZE 16U
+static struct app_canvas_rect canvas_queue[CANVAS_QUEUE_SIZE];
+static unsigned canvas_head, canvas_tail;
 
 static void label(unsigned x, unsigned y, const char *text, uint32_t color) {
     while (*text) {
@@ -149,6 +152,28 @@ void gterminal_flush(void) {
         interrupts_restore(flags);
         consume(c); /* Only the live worker owns this rendering state. */
     }
+    for (unsigned n = 0; n < CANVAS_QUEUE_SIZE; n++) {
+        uint64_t flags = interrupts_save_and_disable();
+        if (canvas_tail == canvas_head) { interrupts_restore(flags); break; }
+        struct app_canvas_rect r = canvas_queue[canvas_tail];
+        canvas_tail = (canvas_tail + 1) % CANVAS_QUEUE_SIZE;
+        interrupts_restore(flags);
+        gfx_rect(&display, display.width - APP_CANVAS_WIDTH - 24 + r.x,
+                  8 + r.y, r.width, r.height, r.rgb);
+    }
+}
+int gterminal_canvas_submit(const struct app_canvas_rect *r) {
+    if (!r || !r->width || !r->height || r->x >= APP_CANVAS_WIDTH ||
+        r->y >= APP_CANVAS_HEIGHT || r->width > APP_CANVAS_WIDTH - r->x ||
+        r->height > APP_CANVAS_HEIGHT - r->y || r->rgb > 0xffffff) return -2;
+    if (!active) return -1;
+    uint64_t flags = interrupts_save_and_disable();
+    unsigned next = (canvas_head + 1) % CANVAS_QUEUE_SIZE;
+    if (next == canvas_tail) { interrupts_restore(flags); return -3; }
+    canvas_queue[canvas_head] = *r;
+    canvas_head = next;
+    interrupts_restore(flags);
+    return 0;
 }
 uint64_t gterminal_output_drops(void) {
     uint64_t flags = interrupts_save_and_disable();

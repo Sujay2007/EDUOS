@@ -90,8 +90,17 @@ def check_live(command, rpc, screenshot, pixel, prompt, receive):
     # a live, privately mapped address space instead of dereferencing history.
     token = command("livecheck", wait=False)
     receive(token, b"[LIVE CHECK] Isolated probe active for 75 ticks.")
-    time.sleep(0.2)
-    probe_screen = decode(screenshot("live-process-probe"))
+    # The panel is cleared/redrawn with interrupts enabled, not atomically.
+    # A single delayed screendump can catch its blank/partial redraw, and the
+    # old 0.2s + screenshot's 0.3s delay consumed most of the 75-tick probe.
+    # Observe immediately and poll for the same required rendered evidence.
+    deadline = time.monotonic() + 5
+    probe_screen = ""
+    while time.monotonic() < deadline:
+        probe_screen = decode(screenshot("live-process-probe", settle=0))
+        if "live_probe" in probe_screen and re.search(r"MAPPINGS PID [1-9]\d*", probe_screen):
+            break
+        time.sleep(0.02)
     require("live_probe" in probe_screen and re.search(r"MAPPINGS PID [1-9]\d*", probe_screen),
             "live isolated process was not displayed")
     result = prompt(token)

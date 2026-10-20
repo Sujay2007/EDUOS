@@ -12,6 +12,14 @@
 #define SYS_WRITE 2
 #define SYS_GETPID 3
 #define SYS_YIELD 4
+#define SYS_READFILE 5
+#define SYS_DIRENT 6
+#define SYS_CANVAS_RECT 7
+#define SYS_SLEEP 8
+
+#define SYS_FILE_MAX_BYTES 1024U
+/* Stable application ABI: zero-terminated name plus length, no kernel pointers. */
+struct syscall_dirent { char name[32]; uint64_t size; };
 
 /*
  * Standard System Call Error Codes (returned in %rax)
@@ -20,6 +28,10 @@
 #define SYSCALL_ENOSYS  (-1) /* Unknown / invalid system call number */
 #define SYSCALL_EFAULT  (-2) /* Invalid address or bad user pointer */
 #define SYSCALL_EINVAL  (-3) /* Invalid argument (e.g. invalid file descriptor or length) */
+#define SYSCALL_ENOENT (-4)
+#define SYSCALL_ENODEV (-5)
+#define SYSCALL_EIO (-6)
+#define SYSCALL_EAGAIN (-7)
 
 /*
  * Upper limit for user space addresses (lower canonical half: 0 to 0x00007FFFFFFFFFFF)
@@ -55,6 +67,7 @@ void syscall_handler(struct interrupt_frame *frame);
 
 struct syscall_stats {
     uint64_t total, exits, writes, getpids, yields, unknown;
+    uint64_t reads, lists, draws, sleeps;
     uint64_t last_number;
     uint32_t last_tid, last_pid;
 };

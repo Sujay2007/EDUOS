@@ -79,6 +79,8 @@ void live_panel_render(const struct live_snapshot *s) {
         text("Exit "); number(s->syscalls.exits); text(" Write "); number(s->syscalls.writes);
         text(" Getpid "); number(s->syscalls.getpids); emit(TEXT);
         text("Sys_yield "); number(s->syscalls.yields); text(" Unknown "); number(s->syscalls.unknown); emit(TEXT);
+        text("Read "); number(s->syscalls.reads); text(" List "); number(s->syscalls.lists);
+        text(" Draw "); number(s->syscalls.draws); text(" Sleep "); number(s->syscalls.sleeps); emit(TEXT);
         /* Measured switches per snapshot, clipped at 20 for the chart only. */
         history[history_at++ % 32] = switches > 20 ? 20 : switches;
         text("Switch history: last 32 samples (0..20)"); emit(ACCENT);

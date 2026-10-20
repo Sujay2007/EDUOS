@@ -13,6 +13,7 @@
 #include "usermode.h"
 #include "fs.h"
 #include "live.h"
+#include "apps.h"
 
 #define SHELL_BUFFER_SIZE 256
 #define SHELL_PROMPT "edus> "
@@ -28,6 +29,9 @@ static int streq(const char *s1, const char *s2) {
 static void cmd_help(void) {
     terminal_writeln("Educational OS Shell - Available Commands:");
     terminal_writeln("  help          - Display this help information");
+    terminal_writeln("  apps          - List built-in isolated user applications");
+    terminal_writeln("  run <app> [f] - Launch an application in the foreground");
+    terminal_writeln("  apptest       - Run application integration and user ABI checks");
     terminal_writeln("  live          - Dump the last displayed kernel-state snapshot");
     terminal_writeln("  livecheck     - Verify live memory/process/syscall data with a temporary probe");
     terminal_writeln("  ls            - List files in the read-only root directory");
@@ -611,7 +615,13 @@ static void execute_command(char *cmd_line) {
 
     const char *args = &cmd_line[i];
 
-    if (streq(cmd, "livecheck")) {
+    if (streq(cmd, "apps")) {
+        apps_list();
+    } else if (streq(cmd, "run")) {
+        apps_command(args);
+    } else if (streq(cmd, "apptest")) {
+        if (apps_test_all()) terminal_writeln("Application integration FAILED.");
+    } else if (streq(cmd, "livecheck")) {
         if (live_runtime_check() != 0) terminal_writeln("Live diagnostic FAILED.");
     } else if (streq(cmd, "live")) {
         live_dump();
