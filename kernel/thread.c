@@ -3,6 +3,8 @@
 #include "gdt.h"
 #include "pit.h"
 #include "serial.h"
+#include "vmm.h"
+#include "process.h"
 
 static struct thread *thread_list_head = NULL;
 static struct thread *current_thread = NULL;
@@ -209,9 +211,76 @@ struct thread *thread_create(const char *name, void (*entry)(void *), void *arg)
     t->sleep_deadline = 0;
     t->run_count = 0;
     t->total_ticks = 0;
+    t->process = NULL;
 
     add_thread_to_list(t);
     return t;
+}
+
+struct thread *thread_create_user(struct process *proc, const char *name, uint64_t user_rip, uint64_t user_rsp) {
+    if (proc == NULL) {
+        return NULL;
+    }
+
+    struct thread *t = (struct thread *)kmalloc(sizeof(struct thread));
+    if (t == NULL) {
+        return NULL;
+    }
+
+    void *kstack = kmalloc(THREAD_DEFAULT_STACK_SIZE);
+    if (kstack == NULL) {
+        kfree(t);
+        return NULL;
+    }
+
+    kmemset(t, 0, sizeof(struct thread));
+    kstrncpy(t->name, (name != NULL) ? name : "user_thread", THREAD_NAME_MAX);
+
+    uint64_t kstack_top = (uint64_t)kstack + THREAD_DEFAULT_STACK_SIZE;
+    kstack_top &= ~0xFULL; /* 16-byte align */
+
+    /* Place initial interrupt_frame at top of kernel stack */
+    struct interrupt_frame *frame = (struct interrupt_frame *)(kstack_top - sizeof(struct interrupt_frame));
+    kmemset(frame, 0, sizeof(struct interrupt_frame));
+
+    frame->ss = GDT_USER_DATA_RPL3; /* 0x1B */
+    frame->rsp = user_rsp;          /* User mode stack pointer */
+    frame->rflags = 0x202;          /* IF=1 */
+    frame->cs = GDT_USER_CODE_RPL3; /* 0x23 */
+    frame->rip = user_rip;          /* User mode instruction pointer */
+    frame->error_code = 0;
+    frame->vector = 0;
+
+    t->tid = next_tid++;
+    t->state = THREAD_STATE_READY;
+    t->saved_frame = frame;
+    t->stack_base = kstack;
+    t->stack_size = THREAD_DEFAULT_STACK_SIZE;
+    t->time_slice_ticks = SCHEDULER_QUANTUM_TICKS;
+    t->sleep_deadline = 0;
+    t->run_count = 0;
+    t->total_ticks = 0;
+    t->process = proc;
+
+    add_thread_to_list(t);
+    return t;
+}
+
+int thread_process_has_live_threads(struct process *proc) {
+    if (proc == NULL) {
+        return 0;
+    }
+    uint64_t rflags = interrupts_save_and_disable();
+    struct thread *t = thread_list_head;
+    while (t != NULL) {
+        if (t->process == proc) {
+            interrupts_restore(rflags);
+            return 1;
+        }
+        t = t->next;
+    }
+    interrupts_restore(rflags);
+    return 0;
 }
 
 static struct thread *select_next_thread(void) {
@@ -279,6 +348,9 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
         }
 
         current_thread->total_ticks++;
+        if (current_thread->process != NULL) {
+            current_thread->process->total_ticks++;
+        }
     }
 
     /*
@@ -310,10 +382,27 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
                 if (vec == 32) {
                     sched_stats.timer_preemptions++;
                 }
+
+                if (current_thread->process != NULL) {
+                    current_thread->process->state = (process_state_t)current_thread->state;
+                }
                 current_thread = next;
                 if (next->stack_base != NULL) {
                     gdt_set_kernel_stack((uint64_t)next->stack_base + next->stack_size);
                 }
+
+                uint64_t target_pml4 = (next->process != NULL && next->process->pml4_phys != 0)
+                                           ? next->process->pml4_phys
+                                           : vmm_get_kernel_pml4();
+                if (vmm_get_current_pml4() != target_pml4) {
+                    vmm_set_current_pml4(target_pml4);
+                }
+
+                if (next->process != NULL) {
+                    next->process->state = PROCESS_STATE_RUNNING;
+                    next->process->run_count++;
+                }
+
                 return next->saved_frame;
             }
         }
@@ -346,10 +435,26 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
                 sched_stats.total_switches++;
                 sched_stats.timer_preemptions++;
 
+                if (current_thread->process != NULL) {
+                    current_thread->process->state = (process_state_t)current_thread->state;
+                }
                 current_thread = next;
                 if (next->stack_base != NULL) {
                     gdt_set_kernel_stack((uint64_t)next->stack_base + next->stack_size);
                 }
+
+                uint64_t target_pml4 = (next->process != NULL && next->process->pml4_phys != 0)
+                                           ? next->process->pml4_phys
+                                           : vmm_get_kernel_pml4();
+                if (vmm_get_current_pml4() != target_pml4) {
+                    vmm_set_current_pml4(target_pml4);
+                }
+
+                if (next->process != NULL) {
+                    next->process->state = PROCESS_STATE_RUNNING;
+                    next->process->run_count++;
+                }
+
                 return next->saved_frame;
             }
         }
@@ -363,6 +468,19 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
         if (current_thread->state == THREAD_STATE_RUNNING) {
             current_thread->state = THREAD_STATE_READY;
         } else if (current_thread->state == THREAD_STATE_TERMINATED) {
+            if (current_thread->process != NULL) {
+                struct process *proc = current_thread->process;
+                if (proc->state != PROCESS_STATE_TERMINATED) {
+                    proc->state = PROCESS_STATE_TERMINATED;
+                    if (proc->exit_code == 0) {
+                        proc->exit_code = -1; /* Sensible failure exit code if terminated unexpectedly */
+                    }
+                }
+                if (proc->main_thread == current_thread) {
+                    proc->main_thread = NULL;
+                }
+                current_thread->process = NULL; /* No longer retain pointer in deferred-reclamation list */
+            }
             remove_thread_from_list(current_thread);
             current_thread->next = dead_threads_head;
             dead_threads_head = current_thread;
@@ -377,10 +495,26 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
             sched_stats.total_switches++;
             sched_stats.voluntary_yields++;
 
+            if (current_thread->process != NULL) {
+                current_thread->process->state = (process_state_t)current_thread->state;
+            }
             current_thread = next;
             if (next->stack_base != NULL) {
                 gdt_set_kernel_stack((uint64_t)next->stack_base + next->stack_size);
             }
+
+            uint64_t target_pml4 = (next->process != NULL && next->process->pml4_phys != 0)
+                                       ? next->process->pml4_phys
+                                       : vmm_get_kernel_pml4();
+            if (vmm_get_current_pml4() != target_pml4) {
+                vmm_set_current_pml4(target_pml4);
+            }
+
+            if (next->process != NULL) {
+                next->process->state = PROCESS_STATE_RUNNING;
+                next->process->run_count++;
+            }
+
             return next->saved_frame;
         } else {
             current_thread->state = THREAD_STATE_RUNNING;

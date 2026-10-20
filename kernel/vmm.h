@@ -83,4 +83,39 @@ void vmm_invlpg(uint64_t virt_addr);
  */
 void *vmm_phys_to_virt(uint64_t phys_addr);
 
+/*
+ * Get the kernel's root PML4 physical address.
+ */
+uint64_t vmm_get_kernel_pml4(void);
+
+/*
+ * Get the active PML4 physical address loaded in CR3.
+ */
+uint64_t vmm_get_current_pml4(void);
+
+/*
+ * Switch active address space by loading CR3 with the specified PML4 physical address.
+ */
+void vmm_set_current_pml4(uint64_t pml4_phys);
+
+/*
+ * Create a new address space (PML4) with shared higher-half kernel mappings (256..511)
+ * and an isolated, zeroed lower-half (0..255) for user processes.
+ * Returns physical address of the new PML4, or 0 on allocation failure.
+ */
+uint64_t vmm_create_address_space(void);
+
+/*
+ * Destroy a process address space: frees all lower-half intermediate page tables
+ * (PDPT, PD, PT) and the PML4 page itself. Leaves shared kernel tables intact.
+ */
+void vmm_destroy_address_space(uint64_t pml4_phys);
+
+/*
+ * Map/Unmap/Lookup virtual pages within a specific PML4 address space.
+ */
+int vmm_map_page_pml4(uint64_t pml4_phys, uint64_t virt_addr, uint64_t phys_addr, uint64_t flags);
+int vmm_unmap_page_pml4(uint64_t pml4_phys, uint64_t virt_addr);
+uint64_t vmm_virt_to_phys_pml4(uint64_t pml4_phys, uint64_t virt_addr, uint64_t *out_flags);
+
 #endif /* VMM_H */

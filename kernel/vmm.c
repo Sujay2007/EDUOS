@@ -26,6 +26,26 @@ static inline uint64_t read_cr3(void) {
     return cr3;
 }
 
+static inline void write_cr3(uint64_t cr3) {
+    __asm__ volatile ("mov %0, %%cr3" : : "r"(cr3) : "memory");
+}
+
+uint64_t vmm_get_kernel_pml4(void) {
+    return kernel_pml4_phys;
+}
+
+uint64_t vmm_get_current_pml4(void) {
+    uint64_t cr3 = read_cr3();
+    return cr3 & PTE_ADDR_MASK;
+}
+
+void vmm_set_current_pml4(uint64_t pml4_phys) {
+    if (pml4_phys == 0) {
+        pml4_phys = kernel_pml4_phys;
+    }
+    write_cr3(pml4_phys);
+}
+
 void *vmm_phys_to_virt(uint64_t phys_addr) {
     if (hhdm_request.response == NULL) {
         return NULL;
@@ -44,6 +64,14 @@ int vmm_init(void) {
 
     if (kernel_pml4_phys == 0) {
         return -2;
+    }
+
+    /* Enforce supervisor-only permissions on all higher-half kernel entries */
+    uint64_t *k_pml4 = (uint64_t *)vmm_phys_to_virt(kernel_pml4_phys);
+    if (k_pml4 != NULL) {
+        for (int i = 256; i < 512; i++) {
+            k_pml4[i] &= ~PTE_USER;
+        }
     }
 
     return 0;
@@ -103,7 +131,91 @@ static uint64_t *get_next_level(uint64_t *table, uint64_t index, int create, uin
     return new_table_virt;
 }
 
-int vmm_map_page(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags) {
+uint64_t vmm_create_address_space(void) {
+    if (kernel_pml4_phys == 0) {
+        return 0;
+    }
+
+    uint64_t pml4_phys = pfa_alloc_page();
+    if (pml4_phys == 0) {
+        return 0;
+    }
+
+    uint64_t *pml4_virt = (uint64_t *)vmm_phys_to_virt(pml4_phys);
+    uint64_t *k_pml4_virt = (uint64_t *)vmm_phys_to_virt(kernel_pml4_phys);
+    if (pml4_virt == NULL || k_pml4_virt == NULL) {
+        pfa_free_page(pml4_phys);
+        return 0;
+    }
+
+    /* Zero out the lower half (indices 0..255) for user address space */
+    for (int i = 0; i < 256; i++) {
+        pml4_virt[i] = 0;
+    }
+
+    /* Share higher half (indices 256..511) supervisor-only kernel mappings */
+    for (int i = 256; i < 512; i++) {
+        pml4_virt[i] = k_pml4_virt[i] & ~PTE_USER;
+    }
+
+    return pml4_phys;
+}
+
+void vmm_destroy_address_space(uint64_t pml4_phys) {
+    if (pml4_phys == 0 || pml4_phys == kernel_pml4_phys) {
+        return; /* Never destroy kernel PML4 */
+    }
+
+    /* If currently active, switch back to kernel PML4 first */
+    if (vmm_get_current_pml4() == pml4_phys) {
+        vmm_set_current_pml4(kernel_pml4_phys);
+    }
+
+    uint64_t *pml4 = (uint64_t *)vmm_phys_to_virt(pml4_phys);
+    if (pml4 == NULL) {
+        return;
+    }
+
+    /* Only traverse and free lower half (0..255) user page tables */
+    for (int i = 0; i < 256; i++) {
+        uint64_t pml4_entry = pml4[i];
+        if (!(pml4_entry & PTE_PRESENT)) {
+            continue;
+        }
+
+        uint64_t pdpt_phys = pml4_entry & PTE_ADDR_MASK;
+        uint64_t *pdpt = (uint64_t *)vmm_phys_to_virt(pdpt_phys);
+        if (pdpt != NULL) {
+            for (int j = 0; j < 512; j++) {
+                uint64_t pdpt_entry = pdpt[j];
+                if (!(pdpt_entry & PTE_PRESENT) || (pdpt_entry & PTE_HUGE)) {
+                    continue;
+                }
+
+                uint64_t pd_phys = pdpt_entry & PTE_ADDR_MASK;
+                uint64_t *pd = (uint64_t *)vmm_phys_to_virt(pd_phys);
+                if (pd != NULL) {
+                    for (int k = 0; k < 512; k++) {
+                        uint64_t pd_entry = pd[k];
+                        if (!(pd_entry & PTE_PRESENT) || (pd_entry & PTE_HUGE)) {
+                            continue;
+                        }
+
+                        uint64_t pt_phys = pd_entry & PTE_ADDR_MASK;
+                        pfa_free_page(pt_phys);
+                    }
+                    pfa_free_page(pd_phys);
+                }
+            }
+            pfa_free_page(pdpt_phys);
+        }
+    }
+
+    /* Free the root PML4 frame itself */
+    pfa_free_page(pml4_phys);
+}
+
+int vmm_map_page_pml4(uint64_t pml4_phys, uint64_t virt_addr, uint64_t phys_addr, uint64_t flags) {
     if ((virt_addr & (PAGE_SIZE - 1)) != 0 || (phys_addr & (PAGE_SIZE - 1)) != 0) {
         return -1;
     }
@@ -119,11 +231,11 @@ int vmm_map_page(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags) {
         }
     }
 
-    if (kernel_pml4_phys == 0) {
-        return -1;
+    if (pml4_phys == 0) {
+        pml4_phys = kernel_pml4_phys;
     }
 
-    uint64_t *pml4 = (uint64_t *)vmm_phys_to_virt(kernel_pml4_phys);
+    uint64_t *pml4 = (uint64_t *)vmm_phys_to_virt(pml4_phys);
     if (pml4 == NULL) {
         return -1;
     }
@@ -155,11 +267,18 @@ int vmm_map_page(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags) {
 
     pt[pt_i] = (phys_addr & PTE_ADDR_MASK) | flags | PTE_PRESENT;
 
-    vmm_invlpg(virt_addr);
+    /* Invalidate TLB if modifying currently active address space */
+    if (vmm_get_current_pml4() == pml4_phys) {
+        vmm_invlpg(virt_addr);
+    }
     return 0;
 }
 
-int vmm_unmap_page(uint64_t virt_addr) {
+int vmm_map_page(uint64_t virt_addr, uint64_t phys_addr, uint64_t flags) {
+    return vmm_map_page_pml4(vmm_get_current_pml4(), virt_addr, phys_addr, flags);
+}
+
+int vmm_unmap_page_pml4(uint64_t pml4_phys, uint64_t virt_addr) {
     if ((virt_addr & (PAGE_SIZE - 1)) != 0) {
         return -1;
     }
@@ -168,11 +287,11 @@ int vmm_unmap_page(uint64_t virt_addr) {
         return -1;
     }
 
-    if (kernel_pml4_phys == 0) {
-        return -1;
+    if (pml4_phys == 0) {
+        pml4_phys = kernel_pml4_phys;
     }
 
-    uint64_t *pml4 = (uint64_t *)vmm_phys_to_virt(kernel_pml4_phys);
+    uint64_t *pml4 = (uint64_t *)vmm_phys_to_virt(pml4_phys);
     if (pml4 == NULL) {
         return -1;
     }
@@ -202,17 +321,28 @@ int vmm_unmap_page(uint64_t virt_addr) {
     }
 
     pt[pt_i] = 0;
-    vmm_invlpg(virt_addr);
+
+    if (vmm_get_current_pml4() == pml4_phys) {
+        vmm_invlpg(virt_addr);
+    }
 
     return 0;
 }
 
-uint64_t vmm_virt_to_phys(uint64_t virt_addr, uint64_t *out_flags) {
-    if (!vmm_is_canonical(virt_addr) || kernel_pml4_phys == 0) {
+int vmm_unmap_page(uint64_t virt_addr) {
+    return vmm_unmap_page_pml4(vmm_get_current_pml4(), virt_addr);
+}
+
+uint64_t vmm_virt_to_phys_pml4(uint64_t pml4_phys, uint64_t virt_addr, uint64_t *out_flags) {
+    if (!vmm_is_canonical(virt_addr)) {
         return 0;
     }
 
-    uint64_t *pml4 = (uint64_t *)vmm_phys_to_virt(kernel_pml4_phys);
+    if (pml4_phys == 0) {
+        pml4_phys = kernel_pml4_phys;
+    }
+
+    uint64_t *pml4 = (uint64_t *)vmm_phys_to_virt(pml4_phys);
     if (pml4 == NULL) {
         return 0;
     }
@@ -247,4 +377,8 @@ uint64_t vmm_virt_to_phys(uint64_t virt_addr, uint64_t *out_flags) {
     }
 
     return (pte & PTE_ADDR_MASK) | (virt_addr & (PAGE_SIZE - 1));
+}
+
+uint64_t vmm_virt_to_phys(uint64_t virt_addr, uint64_t *out_flags) {
+    return vmm_virt_to_phys_pml4(vmm_get_current_pml4(), virt_addr, out_flags);
 }

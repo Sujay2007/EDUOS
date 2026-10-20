@@ -2,6 +2,7 @@
 #include "vmm.h"
 #include "serial.h"
 #include "thread.h"
+#include "process.h"
 #include <stddef.h>
 
 extern void user_exit_to_kernel(int exit_code);
@@ -62,7 +63,12 @@ void syscall_handler(struct interrupt_frame *frame) {
     switch (sys_num) {
         case SYS_EXIT: {
             int status = (int)frame->rdi;
-            user_exit_to_kernel(status);
+            struct thread *curr = thread_get_current();
+            if (curr != NULL && curr->process != NULL) {
+                process_exit(curr->process, status);
+            } else {
+                user_exit_to_kernel(status);
+            }
             /* Does not return */
             break;
         }
@@ -105,7 +111,11 @@ void syscall_handler(struct interrupt_frame *frame) {
 
         case SYS_GETPID: {
             struct thread *curr = thread_get_current();
-            frame->rax = (curr != NULL) ? (int64_t)curr->tid : 1;
+            if (curr != NULL && curr->process != NULL) {
+                frame->rax = (int64_t)curr->process->pid;
+            } else {
+                frame->rax = 0;
+            }
             return;
         }
 

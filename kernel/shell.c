@@ -2,11 +2,14 @@
 #include "terminal.h"
 #include "keyboard.h"
 #include "pfa.h"
+#include "vmm.h"
 #include "heap.h"
 #include "pit.h"
 #include "io.h"
 #include "idt.h"
 #include "thread.h"
+#include "process.h"
+#include "process_test.h"
 #include "usermode.h"
 
 #define SHELL_BUFFER_SIZE 256
@@ -32,6 +35,10 @@ static void cmd_help(void) {
     terminal_writeln("  sched         - Display scheduler execution metrics and context switches");
     terminal_writeln("  yield         - Voluntarily yield the CPU to another thread");
     terminal_writeln("  sleep <ticks> - Block current thread for specified timer ticks");
+    terminal_writeln("  ps            - List active processes and address space PML4 roots");
+    terminal_writeln("  proc <pid>    - Display detailed process metrics and memory layout");
+    terminal_writeln("  vmmap <pid>   - Walk 4-level page table and display memory mappings");
+    terminal_writeln("  proctest      - Run process isolation and protection test suite");
     terminal_writeln("  usertest      - Execute Ring 3 user mode & system call test suite");
     terminal_writeln("  about         - Display educational OS system information");
     terminal_writeln("  reboot        - Reboot the computer");
@@ -256,6 +263,247 @@ static void cmd_usertest(void) {
     }
 }
 
+static void cmd_ps(void) {
+    terminal_writeln("PID   Name             State        TID   Exit   PML4 CR3");
+    terminal_writeln("-------------------------------------------------------------------");
+
+    struct process *p = process_get_list();
+    while (p != NULL) {
+        terminal_write_dec(p->pid);
+        if (p->pid < 10) terminal_write("     ");
+        else if (p->pid < 100) terminal_write("    ");
+        else terminal_write("   ");
+
+        terminal_write(p->name);
+        size_t nlen = 0;
+        while (p->name[nlen]) nlen++;
+        for (size_t sp = nlen; sp < 17; sp++) {
+            terminal_write(" ");
+        }
+
+        const char *st_str = process_state_to_string(p->state);
+        terminal_write(st_str);
+        size_t slen = 0;
+        while (st_str[slen]) slen++;
+        for (size_t sp = slen; sp < 13; sp++) {
+            terminal_write(" ");
+        }
+
+        if (p->main_thread != NULL) {
+            terminal_write_dec(p->main_thread->tid);
+            if (p->main_thread->tid < 10) terminal_write("     ");
+            else terminal_write("    ");
+        } else {
+            terminal_write("-     ");
+        }
+
+        if (p->exit_code < 0) {
+            terminal_write("-");
+            terminal_write_dec((uint64_t)(-p->exit_code));
+            terminal_write("   ");
+        } else {
+            terminal_write_dec((uint64_t)p->exit_code);
+            terminal_write("      ");
+        }
+
+        terminal_write_hex(p->pml4_phys);
+        terminal_writeln("");
+
+        p = p->next;
+    }
+}
+
+static void cmd_proc(const char *args) {
+    while (*args == ' ' || *args == '\t') args++;
+    if (*args == '\0') {
+        terminal_writeln("Usage: proc <pid>");
+        return;
+    }
+
+    uint32_t pid = 0;
+    while (*args >= '0' && *args <= '9') {
+        pid = pid * 10 + (*args - '0');
+        args++;
+    }
+
+    struct process *p = process_get_by_pid((pid_t)pid);
+    if (p == NULL) {
+        terminal_write("Process with PID ");
+        terminal_write_dec(pid);
+        terminal_writeln(" not found.");
+        return;
+    }
+
+    terminal_write("Process Information for PID ");
+    terminal_write_dec(p->pid);
+    terminal_write(" ('");
+    terminal_write(p->name);
+    terminal_writeln("'):");
+
+    terminal_write("  State           : ");
+    terminal_writeln(process_state_to_string(p->state));
+
+    terminal_write("  Exit Code       : ");
+    if (p->exit_code < 0) {
+        terminal_write("-");
+        terminal_write_dec((uint64_t)(-p->exit_code));
+    } else {
+        terminal_write_dec((uint64_t)p->exit_code);
+    }
+    terminal_writeln("");
+
+    terminal_write("  PML4 Phys (CR3) : ");
+    terminal_write_hex(p->pml4_phys);
+    terminal_writeln("");
+
+    terminal_write("  Main Thread TID : ");
+    if (p->main_thread != NULL) {
+        terminal_write_dec(p->main_thread->tid);
+    } else {
+        terminal_write("None");
+    }
+    terminal_writeln("");
+
+    terminal_write("  User Code VAddr : ");
+    terminal_write_hex(p->user_code_vaddr);
+    terminal_write(" (Phys: ");
+    terminal_write_hex(p->user_code_phys);
+    terminal_write(", Pages: ");
+    terminal_write_dec(p->user_code_pages);
+    terminal_writeln(")");
+
+    terminal_write("  User Stack Base : ");
+    terminal_write_hex(p->user_stack_vaddr);
+    terminal_write(" (Top: ");
+    terminal_write_hex(p->user_stack_top);
+    terminal_write(", Phys: ");
+    terminal_write_hex(p->user_stack_phys);
+    terminal_write(", Pages: ");
+    terminal_write_dec(p->user_stack_pages);
+    terminal_writeln(")");
+
+    terminal_write("  Run Count       : ");
+    terminal_write_dec(p->run_count);
+    terminal_writeln("");
+
+    terminal_write("  Total CPU Ticks : ");
+    terminal_write_dec(p->total_ticks);
+    terminal_writeln("");
+}
+
+static void cmd_vmmap(const char *args) {
+    while (*args == ' ' || *args == '\t') args++;
+    if (*args == '\0') {
+        terminal_writeln("Usage: vmmap <pid>");
+        return;
+    }
+
+    uint32_t pid = 0;
+    while (*args >= '0' && *args <= '9') {
+        pid = pid * 10 + (*args - '0');
+        args++;
+    }
+
+    struct process *p = process_get_by_pid((pid_t)pid);
+    if (p == NULL) {
+        terminal_write("Process with PID ");
+        terminal_write_dec(pid);
+        terminal_writeln(" not found.");
+        return;
+    }
+
+    terminal_write("Virtual Memory Map for PID ");
+    terminal_write_dec(p->pid);
+    terminal_write(" ('");
+    terminal_write(p->name);
+    terminal_write("', PML4=");
+    terminal_write_hex(p->pml4_phys);
+    terminal_writeln("):");
+    terminal_writeln("Virtual Address Range             Physical Frame       Permissions");
+    terminal_writeln("-------------------------------------------------------------------------");
+
+    uint64_t *pml4 = (uint64_t *)vmm_phys_to_virt(p->pml4_phys);
+    if (pml4 == NULL) {
+        terminal_writeln("  [Error: Unable to translate PML4 to virtual address]");
+        return;
+    }
+
+    int user_mappings_found = 0;
+    for (int pml4_i = 0; pml4_i < 256; pml4_i++) {
+        if (!(pml4[pml4_i] & PTE_PRESENT)) continue;
+        uint64_t *pdpt = (uint64_t *)vmm_phys_to_virt(pml4[pml4_i] & PTE_ADDR_MASK);
+        if (pdpt == NULL) continue;
+
+        for (int pdpt_i = 0; pdpt_i < 512; pdpt_i++) {
+            if (!(pdpt[pdpt_i] & PTE_PRESENT)) continue;
+            if (pdpt[pdpt_i] & PTE_HUGE) {
+                uint64_t vstart = ((uint64_t)pml4_i << 39) | ((uint64_t)pdpt_i << 30);
+                terminal_write_hex(vstart);
+                terminal_write(" - ");
+                terminal_write_hex(vstart + 0x40000000ULL - 1);
+                terminal_write("  ");
+                terminal_write_hex(pdpt[pdpt_i] & PTE_ADDR_MASK);
+                terminal_writeln("  [1GiB, User]");
+                user_mappings_found++;
+                continue;
+            }
+            uint64_t *pd = (uint64_t *)vmm_phys_to_virt(pdpt[pdpt_i] & PTE_ADDR_MASK);
+            if (pd == NULL) continue;
+
+            for (int pd_i = 0; pd_i < 512; pd_i++) {
+                if (!(pd[pd_i] & PTE_PRESENT)) continue;
+                if (pd[pd_i] & PTE_HUGE) {
+                    uint64_t vstart = ((uint64_t)pml4_i << 39) | ((uint64_t)pdpt_i << 30) | ((uint64_t)pd_i << 21);
+                    terminal_write_hex(vstart);
+                    terminal_write(" - ");
+                    terminal_write_hex(vstart + 0x200000ULL - 1);
+                    terminal_write("  ");
+                    terminal_write_hex(pd[pd_i] & PTE_ADDR_MASK);
+                    terminal_writeln("  [2MiB, User]");
+                    user_mappings_found++;
+                    continue;
+                }
+                uint64_t *pt = (uint64_t *)vmm_phys_to_virt(pd[pd_i] & PTE_ADDR_MASK);
+                if (pt == NULL) continue;
+
+                for (int pt_i = 0; pt_i < 512; pt_i++) {
+                    if (!(pt[pt_i] & PTE_PRESENT)) continue;
+                    uint64_t vstart = ((uint64_t)pml4_i << 39) | ((uint64_t)pdpt_i << 30) |
+                                     ((uint64_t)pd_i << 21) | ((uint64_t)pt_i << 12);
+                    terminal_write_hex(vstart);
+                    terminal_write(" - ");
+                    terminal_write_hex(vstart + 0x1000ULL - 1);
+                    terminal_write("  ");
+                    terminal_write_hex(pt[pt_i] & PTE_ADDR_MASK);
+                    terminal_write("  [4KiB, ");
+                    if (pt[pt_i] & PTE_USER) terminal_write("User, ");
+                    else terminal_write("Supervisor, ");
+                    if (pt[pt_i] & PTE_WRITABLE) terminal_write("R/W]");
+                    else terminal_write("R/O]");
+                    terminal_writeln("");
+                    user_mappings_found++;
+                }
+            }
+        }
+    }
+
+    if (!user_mappings_found) {
+        terminal_writeln("  (No lower-half user mappings present)");
+    }
+
+    terminal_writeln("0xFFFF800000000000 - 0xFFFFFFFFFFFFFFFF  Shared Kernel Space  [Supervisor-Only]");
+}
+
+static void cmd_proctest(void) {
+    terminal_writeln("Running Process Management & Address Space verification suite...");
+    int res = process_test_all();
+    if (res == 0) {
+        terminal_writeln("Process tests PASSED successfully!");
+    } else {
+        terminal_writeln("Process tests FAILED!");
+    }
+}
+
 static void cmd_reboot(void) {
     terminal_writeln("Rebooting machine...");
 
@@ -322,6 +570,14 @@ static void execute_command(char *cmd_line) {
         cmd_yield();
     } else if (streq(cmd, "sleep")) {
         cmd_sleep(args);
+    } else if (streq(cmd, "ps")) {
+        cmd_ps();
+    } else if (streq(cmd, "proc")) {
+        cmd_proc(args);
+    } else if (streq(cmd, "vmmap")) {
+        cmd_vmmap(args);
+    } else if (streq(cmd, "proctest")) {
+        cmd_proctest();
     } else if (streq(cmd, "usertest") || streq(cmd, "ring3")) {
         cmd_usertest();
     } else if (streq(cmd, "about")) {

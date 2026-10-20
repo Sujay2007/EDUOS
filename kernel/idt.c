@@ -1,6 +1,9 @@
 #include "idt.h"
 #include "gdt.h"
 #include "pic.h"
+#include "serial.h"
+#include "thread.h"
+#include "process.h"
 #include <stddef.h>
 
 extern void serial_write(const char *text);
@@ -130,7 +133,32 @@ struct interrupt_frame *isr_dispatch(struct interrupt_frame *frame) {
         isr_handlers[vec](frame);
     } else if (vec < 32) {
         if ((frame->cs & 3) == 3) {
-            /* Handled user-mode exception cleanly without crashing kernel */
+            struct thread *curr = thread_get_current();
+            if (curr != NULL && curr->process != NULL && curr->process->pid != 0) {
+                uint64_t cr2 = (vec == 14) ? read_cr2() : 0;
+                process_record_fault(curr->process->pid, vec, frame->rip, cr2, frame->error_code);
+                serial_write("  [PROCESS FAULT] PID ");
+                serial_write_dec(curr->process->pid);
+                serial_write(" ('");
+                serial_write(curr->process->name);
+                serial_write("') faulted: Vector ");
+                serial_write_dec(vec);
+                serial_write(" (");
+                serial_write(exception_messages[vec]);
+                serial_write(") at RIP ");
+                serial_write_hex64(frame->rip);
+                if (vec == 14) {
+                    serial_write(" CR2 ");
+                    serial_write_hex64(cr2);
+                }
+                serial_write(" ErrorCode ");
+                serial_write_hex64(frame->error_code);
+                serial_write(" -> Terminating Process\r\n");
+                process_exit(curr->process, -(int)(vec + 100));
+                return frame;
+            }
+
+            /* Handled single-shot user-mode exception cleanly without crashing kernel */
             user_fault_handler(frame);
             return frame;
         }

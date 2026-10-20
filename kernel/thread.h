@@ -35,6 +35,8 @@ struct thread {
     uint64_t run_count;             /* Number of times scheduled */
     uint64_t total_ticks;           /* Total timer ticks spent running */
 
+    struct process *process;        /* Associated process (NULL for kernel threads) */
+
     /* Linked list pointer */
     struct thread *next;            /* Next thread in global thread list */
 };
@@ -50,6 +52,9 @@ struct scheduler_stats {
     uint32_t terminated_threads;   /* Number of TERMINATED threads */
 };
 
+/* Forward declaration */
+struct process;
+
 /*
  * Initialize the thread and scheduler subsystem.
  * Wraps the current boot execution context into a thread and creates the idle thread.
@@ -62,6 +67,17 @@ int thread_init(void);
  * Returns pointer to new thread, or NULL on failure.
  */
 struct thread *thread_create(const char *name, void (*entry)(void *), void *arg);
+
+/*
+ * Create a new user-mode thread associated with a process.
+ * Prepares interrupt frame for Ring 3 iretq execution at user_rip and user_rsp.
+ */
+struct thread *thread_create_user(struct process *proc, const char *name, uint64_t user_rip, uint64_t user_rsp);
+
+/*
+ * Check if any live (ready, running, blocked) thread is associated with the given process.
+ */
+int thread_process_has_live_threads(struct process *proc);
 
 /*
  * Voluntarily yield the CPU to another runnable thread.
