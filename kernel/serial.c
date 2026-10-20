@@ -1,5 +1,6 @@
 #include "serial.h"
 #include "io.h"
+#include "graphics.h"
 
 void serial_init(void) {
     outb(COM1_PORT + 1, 0x00); /* Disable all interrupts */
@@ -17,6 +18,8 @@ void serial_putchar(char c) {
         __asm__ volatile ("pause");
     }
     outb(COM1_PORT, (uint8_t)c);
+    /* Mirror every output path, including commands that bypass terminal_write. */
+    gterminal_putchar(c);
 }
 
 void serial_write(const char *text) {

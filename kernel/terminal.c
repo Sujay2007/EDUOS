@@ -1,8 +1,9 @@
 #include "terminal.h"
 #include "serial.h"
+#include "graphics.h"
 
 void terminal_init(void) {
-    /* Serial port is already initialized, but ensure clean terminal state */
+    gterminal_init();
 }
 
 void terminal_putchar(char c) {

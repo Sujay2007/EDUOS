@@ -4,7 +4,7 @@ LD = ld.lld
 CFLAGS = -target x86_64-unknown-none-elf -std=gnu11 -O2 -Wall -Wextra -ffreestanding -fno-stack-protector -fno-pic -fno-pie -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -mcmodel=kernel -Itools/limine
 LDFLAGS = -nostdlib -static -z max-page-size=0x1000 -T linker.ld
 
-.PHONY: all clean run
+.PHONY: all clean run run-graphics test-graphics
 
 all: educational-os.iso disk.img
 
@@ -15,7 +15,19 @@ OBJS = kernel/main.o kernel/pfa.o kernel/vmm.o kernel/heap.o \
        kernel/thread.o kernel/thread_test.o \
        kernel/syscall.o kernel/usermode.o kernel/usermode_entry.o \
        kernel/process.o kernel/process_test.o kernel/process_test_blobs.o \
-       kernel/block.o kernel/ata.o kernel/fs.o kernel/fs_test.o
+       kernel/block.o kernel/ata.o kernel/fs.o kernel/fs_test.o \
+       kernel/graphics.o kernel/font.o kernel/gterminal.o
+
+kernel/graphics.o: kernel/graphics.c kernel/graphics.h tools/limine/limine.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/font.o: kernel/font.c kernel/graphics.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/gterminal.o: kernel/gterminal.c kernel/graphics.h kernel/serial.h kernel/idt.h tools/limine/limine.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/serial.o kernel/terminal.o: kernel/graphics.h
 
 kernel/block.o: kernel/block.c kernel/block.h
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -124,3 +136,13 @@ run: educational-os.iso disk.img
 
 clean:
 	rm -f $(OBJS) kernel/kernel.elf educational-os.iso
+
+# Keep the existing headless serial run target; graphical boot is opt-in.
+run-graphics: educational-os.iso disk.img
+	qemu-system-x86_64 -M q35 -m 256M -cdrom educational-os.iso -boot d -serial stdio -display gtk \
+		-device piix3-ide,id=eduide \
+		-drive if=none,id=edudisk,file=disk.img,format=raw \
+		-device ide-hd,drive=edudisk,bus=eduide.0
+
+test-graphics: all
+	python3 tools/test_graphics.py

@@ -22,6 +22,13 @@ volatile struct limine_hhdm_request hhdm_request = {
     .response = NULL
 };
 
+__attribute__((used, section(".limine_requests")))
+volatile struct limine_framebuffer_request framebuffer_request = {
+    .id = LIMINE_FRAMEBUFFER_REQUEST,
+    .revision = 0,
+    .response = NULL
+};
+
 __attribute__((used, section(".limine_requests_end")))
 static volatile LIMINE_REQUESTS_END_MARKER;
 
@@ -573,7 +580,6 @@ void _start(void) {
 
     /* Initialize keyboard driver, terminal abstraction, and shell */
     keyboard_init();
-    terminal_init();
 
     /* Initialize kernel multitasking and round-robin scheduler */
     thread_init();
@@ -595,6 +601,7 @@ void _start(void) {
     fs_test_all();
 
     /* Initialize and launch interactive shell */
+    terminal_init(); /* Enable framebuffer output after timing-sensitive boot tests. */
     shell_init();
     shell_run();
 
