@@ -90,8 +90,8 @@ int process_map_user_code(struct process *proc, uint64_t vaddr, const void *code
         return -1;
     }
 
-    /* Verify lower canonical address bounds and page alignment */
-    if (vaddr >= 0x0000800000000000ULL || (vaddr & (PAGE_SIZE - 1)) != 0) {
+    /* Verify lower canonical address bounds and page alignment (reject NULL page 0) */
+    if (vaddr < PAGE_SIZE || vaddr >= 0x0000800000000000ULL || (vaddr & (PAGE_SIZE - 1)) != 0) {
         return -1;
     }
 
@@ -146,8 +146,8 @@ int process_map_user_stack(struct process *proc, uint64_t stack_top_vaddr, size_
         return -1;
     }
 
-    /* Validate stack address arithmetic to prevent underflow */
-    if (stack_top_vaddr < PAGE_SIZE) {
+    /* Validate stack address arithmetic to prevent underflow and avoid page 0 */
+    if (stack_top_vaddr < (2 * PAGE_SIZE)) {
         return -1;
     }
 
@@ -222,13 +222,22 @@ void process_destroy(struct process *proc) {
         return; /* Never destroy kernel process */
     }
 
+    uint64_t rflags = interrupts_save_and_disable();
+
+    /* Never destroy kernel address space or active CR3 address space */
+    if (proc->pml4_phys == vmm_get_kernel_pml4() ||
+        (proc->pml4_phys != 0 && proc->pml4_phys == vmm_get_current_pml4())) {
+        interrupts_restore(rflags);
+        return;
+    }
+
     /* Prevent freeing a process while any live thread still references it */
     if (thread_process_has_live_threads(proc)) {
+        interrupts_restore(rflags);
         return;
     }
 
     /* Unlink from global process list protected from interrupts */
-    uint64_t rflags = interrupts_save_and_disable();
     if (process_list_head == proc) {
         process_list_head = proc->next;
     } else {
@@ -240,7 +249,6 @@ void process_destroy(struct process *proc) {
             prev->next = proc->next;
         }
     }
-    interrupts_restore(rflags);
 
     /* Free user code physical frames if mapped */
     if (proc->user_code_phys != 0) {
@@ -267,6 +275,8 @@ void process_destroy(struct process *proc) {
     }
 
     kfree(proc);
+
+    interrupts_restore(rflags);
 }
 
 struct process *process_get_by_pid(pid_t pid) {

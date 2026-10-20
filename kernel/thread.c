@@ -383,7 +383,7 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
                     sched_stats.timer_preemptions++;
                 }
 
-                if (current_thread->process != NULL) {
+                if (current_thread->process != NULL && current_thread->process->state != PROCESS_STATE_TERMINATED) {
                     current_thread->process->state = (process_state_t)current_thread->state;
                 }
                 current_thread = next;
@@ -398,7 +398,7 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
                     vmm_set_current_pml4(target_pml4);
                 }
 
-                if (next->process != NULL) {
+                if (next->process != NULL && next->process->state != PROCESS_STATE_TERMINATED) {
                     next->process->state = PROCESS_STATE_RUNNING;
                     next->process->run_count++;
                 }
@@ -435,7 +435,7 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
                 sched_stats.total_switches++;
                 sched_stats.timer_preemptions++;
 
-                if (current_thread->process != NULL) {
+                if (current_thread->process != NULL && current_thread->process->state != PROCESS_STATE_TERMINATED) {
                     current_thread->process->state = (process_state_t)current_thread->state;
                 }
                 current_thread = next;
@@ -450,7 +450,7 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
                     vmm_set_current_pml4(target_pml4);
                 }
 
-                if (next->process != NULL) {
+                if (next->process != NULL && next->process->state != PROCESS_STATE_TERMINATED) {
                     next->process->state = PROCESS_STATE_RUNNING;
                     next->process->run_count++;
                 }
@@ -472,9 +472,7 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
                 struct process *proc = current_thread->process;
                 if (proc->state != PROCESS_STATE_TERMINATED) {
                     proc->state = PROCESS_STATE_TERMINATED;
-                    if (proc->exit_code == 0) {
-                        proc->exit_code = -1; /* Sensible failure exit code if terminated unexpectedly */
-                    }
+                    proc->exit_code = -1; /* Sensible failure exit code if termination was unexpected */
                 }
                 if (proc->main_thread == current_thread) {
                     proc->main_thread = NULL;
@@ -495,7 +493,7 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
             sched_stats.total_switches++;
             sched_stats.voluntary_yields++;
 
-            if (current_thread->process != NULL) {
+            if (current_thread->process != NULL && current_thread->process->state != PROCESS_STATE_TERMINATED) {
                 current_thread->process->state = (process_state_t)current_thread->state;
             }
             current_thread = next;
@@ -510,7 +508,7 @@ struct interrupt_frame *scheduler_on_interrupt(struct interrupt_frame *frame) {
                 vmm_set_current_pml4(target_pml4);
             }
 
-            if (next->process != NULL) {
+            if (next->process != NULL && next->process->state != PROCESS_STATE_TERMINATED) {
                 next->process->state = PROCESS_STATE_RUNNING;
                 next->process->run_count++;
             }

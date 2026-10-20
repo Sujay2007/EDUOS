@@ -97,11 +97,31 @@ int process_test_all(void) {
             pfa_free_page(user_frame);
             vmm_destroy_address_space(pml4_phys);
 
+            /* Verification of honest mapping validations & safe destruction */
+            struct process *val_proc = process_create("val_proc");
+            int val_ok = 0;
+            if (val_proc != NULL) {
+                uint8_t dummy[16] = {0x90};
+                int r_overflow = process_map_user_code(val_proc, 0x400000, dummy, PAGE_SIZE + 1);
+                int r_unaligned_code = process_map_user_code(val_proc, 0x400100, dummy, 16);
+                int r_multipage_stack = process_map_user_stack(val_proc, 0x80000000, 2);
+                int r_unaligned_stack = process_map_user_stack(val_proc, 0x80000007, 1);
+
+                val_ok = (r_overflow != 0) && (r_unaligned_code != 0) &&
+                         (r_multipage_stack != 0) && (r_unaligned_stack != 0);
+
+                /* Safe destruction constraint verification on PID 0 */
+                struct process *kproc = process_get_by_pid(0);
+                process_destroy(kproc); /* Must safely do nothing */
+
+                process_destroy(val_proc);
+            }
+
             struct pfa_stats pfa_check;
             pfa_get_stats(&pfa_check);
             int leak_ok = (pfa_check.free_pages == baseline_free_pages);
 
-            if (shared_ok && isolated_ok && map_ok && lookup_ok && leak_ok) {
+            if (shared_ok && isolated_ok && map_ok && lookup_ok && val_ok && leak_ok) {
                 serial_write("  [PASS] PML4 lifecycle, higher-half sharing, and memory reclamation verified.\r\n");
             } else {
                 serial_write("  [FAIL] Address space lifecycle verification failed!\r\n");
