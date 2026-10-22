@@ -27,10 +27,21 @@ def check_course(command, screenshot, pixel, key):
         return result.rstrip()
     def context(frame):
         return " ".join(read(frame,180,frame[1]-213+row*22,(frame[0]-204)//12,2) for row in range(5))
+    def stable_frame(name):
+        # Rendering is deferred and a screendump can capture a half-cleared frame.
+        # Require two identical samples before comparing a paused UI's pixels.
+        deadline = time.monotonic() + 8
+        previous = None
+        while True:
+            frame = screenshot(name, settle=0.3)
+            if previous is not None and frame[2] == previous[2]:
+                return frame
+            require(time.monotonic() < deadline, f"{name}: rendering did not settle")
+            previous = frame
     def observe(name,expected):
         deadline=time.monotonic()+4
         while True:
-            frame=screenshot("explorer-"+name,settle=0.15)
+            frame=stable_frame("explorer-"+name)
             if expected in context(frame):return frame
             require(time.monotonic()<deadline,f"{name}: expected contextual result {expected!r}, saw {context(frame)!r}")
     def keys(*codes):
@@ -39,6 +50,36 @@ def check_course(command, screenshot, pixel, key):
     home=screenshot("explorer-home")
     require("Try a mechanism. Change it. See why." in read(home,24,66,40,2),"boot did not prioritize interactive explorers")
     require(b"System Timer Ticks:" in command("ticks"),"serial shell unavailable under explorer")
+    # Every contextual panel must restore the actual rendered experiment exactly.
+    help_names = ("Processes", "CPU scheduling", "Physical memory", "Virtual memory",
+                  "Heap allocation", "Interrupts", "System calls", "Filesystems",
+                  "Concurrency", "Keyboard input", "Framebuffer", "OS architecture",
+                  "Boot dependencies", "CPU execution", "Failure investigation")
+    for index, name in enumerate(help_names):
+        keys("ret", "r", "spc")
+        before = stable_frame(f"help-{index}-experiment")
+        # Check the visible button independently against the bitmap font in white.
+        label = "[H] How to use"
+        reverse = {ch: bits for bits, ch in glyphs.items()}
+        for cell, ch in enumerate(label):
+            for col, bits in enumerate(reverse[ch]):
+                for row in range(7):
+                    expected = "ffffff" if bits & (1 << row) else "087e83"
+                    require(pixel(before, before[0]-200+(cell*6+col)*2, 67+row*2) == bytes.fromhex(expected),
+                            f"{name}: help button missing")
+        key("h")
+        panel = stable_frame(f"help-{index}-start")
+        require(read(panel,180,116,20,2) == "Start here", f"{name}: help did not open")
+        require(name in read(panel,180,146,50,2), f"{name}: wrong contextual instructions")
+        key("pgdn")
+        paged = stable_frame(f"help-{index}-scrolled")
+        require(paged[2] != panel[2], f"{name}: help did not scroll")
+        key("home")
+        require(stable_frame(f"help-{index}-top")[2] == panel[2], f"{name}: help Home did not restore top")
+        keys("r", "c", "1", "e", "i", "h")
+        require(stable_frame(f"help-{index}-return")[2] == before[2], f"{name}: help changed experiment")
+        keys("r", "esc", "down")
+    print("QEMU context help PASS: visible button, relevant instructions, paging/Home, isolated controls and exact return for all 15 mechanisms")
     key("ret")
     initial=observe("process-initial","Select a process")
     require("Model pages:" in read(initial,180,116,20),"first entry did not open a process experiment directly")

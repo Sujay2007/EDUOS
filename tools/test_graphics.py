@@ -47,8 +47,14 @@ def main(extra_checks=None):
         subprocess.run([str(executable)], check=True)
         subprocess.run([
             "clang", "-O2", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Ikernel", "-Itools/limine",
-            "kernel/education_model.c", "kernel/education.c", "kernel/lessons.c", "kernel/graphics.c",
+            "kernel/education_model.c", "kernel/education.c", "kernel/explorer_help.c", "kernel/lessons.c", "kernel/graphics.c",
             "kernel/font.c", "tests/education_test.c", "-o", str(executable)
+        ], cwd=ROOT, check=True)
+        subprocess.run([str(executable)], check=True)
+        subprocess.run([
+            "clang", "-O2", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Ikernel", "-Itools/limine",
+            "kernel/education_model.c", "kernel/explorer_help.c", "kernel/lessons.c", "kernel/graphics.c",
+            "kernel/font.c", "tests/explorer_help_test.c", "-o", str(executable)
         ], cwd=ROOT, check=True)
         subprocess.run([str(executable)], check=True)
         path = temporary / "qmp.sock"

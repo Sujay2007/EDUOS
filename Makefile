@@ -17,7 +17,7 @@ OBJS = kernel/main.o kernel/pfa.o kernel/vmm.o kernel/heap.o \
        kernel/process.o kernel/process_test.o kernel/process_test_blobs.o \
        kernel/block.o kernel/ata.o kernel/fs.o kernel/fs_test.o \
        kernel/graphics.o kernel/font.o kernel/gterminal.o kernel/live.o kernel/live_panel.o kernel/live_probe.o \
-       kernel/apps.o kernel/apps_blobs.o kernel/text_buffer.o kernel/education.o kernel/education_model.o kernel/lessons.o
+       kernel/apps.o kernel/apps_blobs.o kernel/text_buffer.o kernel/education.o kernel/education_model.o kernel/lessons.o kernel/explorer_help.o
 
 kernel/text_buffer.o: kernel/text_buffer.c kernel/text_buffer.h
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -189,3 +189,7 @@ kernel/education_model.o: kernel/education_model.c kernel/education_model.h
 kernel/lessons.o: kernel/lessons.c kernel/lessons.h
 	$(CC) $(CFLAGS) -c $< -o $@
 kernel/gterminal.o kernel/live.o kernel/shell.o: kernel/education.h
+
+kernel/explorer_help.o: kernel/explorer_help.c kernel/explorer_help.h
+	$(CC) $(CFLAGS) -c $< -o $@
+kernel/education.o: kernel/explorer_help.h

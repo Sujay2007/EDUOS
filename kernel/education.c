@@ -1,6 +1,7 @@
 #include "education.h"
 #include "education_model.h"
 #include "lessons.h"
+#include "explorer_help.h"
 #include "keyboard.h"
 #include "serial.h"
 #include "pit.h"
@@ -20,6 +21,10 @@ static const unsigned concepts[]={6,7,3,4,5,8,9,11,10,12,13,0,1,2,14};
 static const char *const names[]={"Processes","CPU scheduling","Physical memory","Virtual memory","Heap allocation","Interrupts","System calls","Filesystems","Concurrency","Keyboard input","Framebuffer","OS architecture","Boot dependencies","CPU execution","Failure investigation"};
 static const char *const summaries[]={"Create children; exit, wait, adopt and reap.","Run tasks; change policy, quantum and arrivals.","Allocate and free frames; inspect bitmap bits.","Map, unmap and translate selected addresses.","Request blocks; split gaps and coalesce frees.","Mask, inject, acknowledge and return.","Validate requests across a privilege boundary.","Look up files; vary offsets and bounded reads.","Choose interleavings; create or prevent deadlock.","Queue key events; consume them or overflow.","Move a cursor; draw pixels and rectangles.","Trace a request across system layers.","Explore which subsystem depends on which.","Change registers and inspect a call stack.","Separate launch, sampling and rendering stages."};
 static unsigned concept, overlay, answer, tick_step;
+#define HELP_OVERLAY 4U
+static unsigned help_saved_overlay, help_saved_canvas;
+static int help_saved_scroll, help_saved_total, help_closed_this_frame;
+static uint64_t help_remaining;
 static int home=1, dirty=1, scroll, total_height, cursor_y;
 static unsigned main_x, scale=2, canvas_height;
 static char messages[15][256];
@@ -196,9 +201,40 @@ static void peripheral_action(unsigned char k) {
         else if(k==' '||k=='f'){unsigned w=k==' '?1:3,h=k==' '?1:2;for(unsigned y=pixel_y;y<pixel_y+h&&y<8;y++)for(unsigned x=pixel_x;x<pixel_x+w&&x<12;x++)pixels[y][x]=pixel_color;note(k==' '?"One retained pixel changed. Its actual framebuffer location depends on origin, scale and pitch; the magnified view shows its logical coordinate.":"A 3x2 rectangle changed retained pixels, clipped at the grid boundary. No write can escape the modeled framebuffer dimensions.");}
     }else{if(k==' '&&tick_step+1<edu_lessons[concepts[concept]].steps)tick_step++;if(k=='b'&&tick_step)tick_step--;note("Supporting walkthrough stage ");append_num(tick_step+1);append(". E explains the mechanism and I shows source references. These ancillary traces remain step-based; direct experiments are available in the main explorers.");}
 }
+/* Help changes presentation only. Preserve the underlying view and animation
+ * phase; the renderer's overlay guard suspends model ticks without resetting it. */
+static void open_help(void) {
+    help_saved_overlay=overlay;help_saved_scroll=scroll;
+    help_saved_total=total_height;help_saved_canvas=canvas_height;
+    uint64_t now=timer_get_ticks();
+    help_remaining=next_run>now?next_run-now:1;
+    overlay=HELP_OVERLAY;scroll=0;
+}
+static void close_help(void) {
+    overlay=help_saved_overlay;scroll=help_saved_scroll;
+    total_height=help_saved_total;canvas_height=help_saved_canvas;
+    if(auto_run)next_run=timer_get_ticks()+help_remaining;
+    help_closed_this_frame=1;
+}
+static void help_key(unsigned char k) {
+    if(k=='h'||k==KEY_ESC){close_help();return;}
+    int limit=total_height>(int)canvas_height?total_height-canvas_height:0;
+    int page=canvas_height/2;
+    if(k==KEY_HOME)scroll=0;
+    else if(k==KEY_END)scroll=limit;
+    else if(k==KEY_PAGE_DOWN||k==' '||k==KEY_DOWN){
+        int n=k==KEY_DOWN?22:page;
+        scroll=n>limit-scroll?limit:scroll+n;
+    }else if(k==KEY_PAGE_UP||k==KEY_UP){
+        int n=k==KEY_UP?22:page;scroll=n>scroll?0:scroll-n;
+    }
+    /* All other keys are consumed: never reset, edit or execute the model. */
+}
 static void event(unsigned char k) {
     if(k>='A'&&k<='Z')k+='a'-'A';dirty=1;
     if(k=='\t')return;
+    if(overlay==HELP_OVERLAY){help_key(k);return;}
+    if(!home&&k=='h'){open_help();return;}
     if(k==KEY_ESC){if(overlay){overlay=0;scroll=0;}else{home=1;auto_run=0;scroll=0;}return;}
     if(home){if(k==KEY_DOWN||k==KEY_RIGHT)concept=(concept+1)%15;else if(k==KEY_UP||k==KEY_LEFT)concept=(concept+14)%15;else if(k=='\n'||k==' '){home=0;scroll=overlay=0;}return;}
     if(k=='e'||k=='i'||k=='?'){if(k=='?')answer=0;overlay=k=='e'?(overlay==1?0:1):k=='i'?(overlay==2?0:2):3;scroll=0;auto_run=0;return;}
@@ -214,7 +250,7 @@ static void chrome(void) {
     text(screen,20,14,"INTERACTIVE OS EXPLORER",0xffffff,NAVY,2);
     text(screen,screen->width-150,20,"Tab: Tools / Explorer",0x7dd8ce,NAVY,1);
     gfx_rect(screen,0,screen->height-30,screen->width,30,NAVY);
-    text(screen,16,screen->height-19,home?"Arrows: choose | Enter: experiment | Tab: shell + live inspector":"Esc: back | R: reset | E: deeper explanation | I: source | PgUp/Dn: canvas | Tab: Tools",0xdce8f5,NAVY,1);
+    text(screen,16,screen->height-19,home?"Arrows: choose | Enter: experiment | Tab: shell + live inspector":overlay==HELP_OVERLAY?"H/Esc: return | Up/Down: line | PgUp/Dn/Space: page | Home/End | Tab: Tools":"Esc: back | R: reset | E: deeper explanation | I: source | PgUp/Dn: canvas | Tab: Tools",0xdce8f5,NAVY,1);
 }
 static void home_page(void) {
     text(screen,24,66,"Try a mechanism. Change it. See why.",INK,PAPER,screen->width>=900?2:1);
@@ -417,6 +453,19 @@ static const char *controls(void) {
         default:return "Space advance supporting trace | B back | R reset | Main experiments are available from Esc";
     }
 }
+static void help_panel(void) {
+    const struct explorer_help *h=&explorer_help[concept];
+    heading("Start here");paragraph(h->start,INK);
+    heading("Controls");paragraph(controls(),INK);paragraph(h->details,MUTED);
+    heading("Step-by-step example");paragraph(h->steps,INK);
+    heading("What to observe");paragraph(h->observe,INK);
+    heading("Why it works");paragraph(h->why,INK);
+    heading("Try changing this");paragraph(h->change,INK);
+    heading("Real kernel implementation");paragraph(h->kernel,INK);
+    paragraph(edu_lessons[concepts[concept]].source,MUTED);
+    heading("Reset and repeat");
+    paragraph("H or Esc closes help and restores the view, selection and state you left. These examples are instructions, not actions performed by reading them. Close help first, then R deliberately resets this experiment. E opens deeper explanation, I source notes, and ? an optional question; Tab opens Tools.",INK);
+}
 static void explanation(void) {
     const struct edu_lesson *l=&edu_lessons[concepts[concept]];
     if(overlay==1){heading("Algorithm / data structures");paragraph(l->mechanism,INK);heading("Why it exists");paragraph(l->problem,INK);heading("Worked example");paragraph(l->example,INK);heading("Edges and limitations");paragraph(l->edge,GOLD);heading("Alternative approaches");paragraph(l->alternative,INK);}
@@ -427,26 +476,31 @@ static void explorer_page(void) {
     main_x=screen->width>=1000?180:20;
     if(main_x>20){gfx_rect(screen,0,48,156,screen->height-78,NAVY);for(unsigned i=0;i<15;i++){unsigned y=72+i*24;if(y+10>screen->height-40)break;text(screen,12,y,names[i],i==concept?0x7dd8ce:0xdce8f5,NAVY,1);}}
     text(screen,main_x,64,names[concept],INK,PAPER,2);
-    text(screen,main_x,94,overlay?"OPTIONAL INSPECTION / Esc returns to the unchanged experiment":"TEACHING MODEL / safe isolated state; not live kernel data",TEAL,PAPER,1);
+    gfx_rect(screen,screen->width-208,60,184,28,TEAL);
+    text(screen,screen->width-200,67,overlay==HELP_OVERLAY?"[H] Close help":"[H] How to use",0xffffff,TEAL,2);
+    text(screen,main_x,94,overlay==HELP_OVERLAY?"HOW TO USE / instructions only; H or Esc returns to your held experiment":overlay?"OPTIONAL INSPECTION / Esc returns to the unchanged experiment":"TEACHING MODEL / safe isolated state; not live kernel data",TEAL,PAPER,1);
     unsigned large=screen->width>=1000&&screen->height>=650;
     unsigned canvas_top=116,context_top=screen->height-(large?232:188),control_top=screen->height-98;
     body=region(main_x,canvas_top,screen->width-main_x-24,context_top-canvas_top-12);
     canvas_height=body.height;
     scale=2;cursor_y=0;
-    if(overlay)explanation();else if(concept==0)process_canvas();else if(concept==1)scheduling_canvas();else if(concept<=4)memory_canvas();else peripheral_canvas();
+    if(overlay==HELP_OVERLAY)help_panel();else if(overlay)explanation();else if(concept==0)process_canvas();else if(concept==1)scheduling_canvas();else if(concept<=4)memory_canvas();else peripheral_canvas();
     total_height=cursor_y;int limit=total_height>(int)body.height?total_height-body.height:0;
     if(scroll>limit){scroll=limit;dirty=1;}
     int saved_scroll=scroll;
     body=region(main_x,context_top,screen->width-main_x-24,large?120:80);cursor_y=scroll=0;scale=1;
-    heading("WHAT CHANGED / WHAT IT MEANS");scale=large?2:1;paragraph(messages[concept],INK);
+    heading(overlay==HELP_OVERLAY?"EXPERIMENT HELD / no model actions while help is open":"WHAT CHANGED / WHAT IT MEANS");scale=large?2:1;
+    paragraph(overlay==HELP_OVERLAY?"Your current experiment and its selection are preserved. Help scrolls independently. H/Esc returns to the previous view; a running scheduling animation resumes without catching up the time spent here.":messages[concept],INK);
     body=region(main_x,control_top,screen->width-main_x-24,62);cursor_y=0;scale=1;
-    heading("CONTROLS (active only in the experiment; Esc closes an explanation)");paragraph(controls(),MUTED);
+    heading(overlay==HELP_OVERLAY?"HELP CONTROLS":"CONTROLS (active only in the experiment; Esc closes an explanation)");
+    paragraph(overlay==HELP_OVERLAY?"H/Esc close | Up/Down line | PgUp/PgDn or Space page | Home/End top/bottom | Tab Tools. Model keys, including R, are inactive until help closes.":controls(),MUTED);
     scroll=saved_scroll;
 }
 void education_render(void) {
     if(!screen)return;
+    help_closed_this_frame=0;
     while(tail!=head){unsigned char k=events[tail];tail=(tail+1)%64;event(k);}
-    if(!tools&&!home&&!overlay&&concept==1&&auto_run&&timer_get_ticks()>=next_run){next_run=timer_get_ticks()+20;scheduling_action(' ');dirty=1;}
+    if(!help_closed_this_frame&&!tools&&!home&&!overlay&&concept==1&&auto_run&&timer_get_ticks()>=next_run){next_run=timer_get_ticks()+20;scheduling_action(' ');dirty=1;}
     if(tools||!dirty)return;
     dirty=0;chrome();if(home)home_page();else explorer_page();
     serial_write("[EXPLORER] concept=");serial_write_dec(concept);serial_write(" overlay=");serial_write_dec(overlay);serial_write(home?" home\r\n":" experiment\r\n");
