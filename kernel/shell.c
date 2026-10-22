@@ -1,5 +1,6 @@
 #include "shell.h"
 #include "terminal.h"
+#include "education.h"
 #include "keyboard.h"
 #include "pfa.h"
 #include "vmm.h"
@@ -26,33 +27,93 @@ static int streq(const char *s1, const char *s2) {
     return *(const unsigned char *)s1 == *(const unsigned char *)s2;
 }
 
-static void cmd_help(void) {
-    terminal_writeln("Educational OS Shell - Available Commands:");
-    terminal_writeln("  help          - Display this help information");
-    terminal_writeln("  apps          - List built-in isolated user applications");
-    terminal_writeln("  run <app> [f] - Launch an application in the foreground");
-    terminal_writeln("  apptest       - Run application integration and user ABI checks");
-    terminal_writeln("  live          - Dump the last displayed kernel-state snapshot");
-    terminal_writeln("  livecheck     - Verify live memory/process/syscall data with a temporary probe");
-    terminal_writeln("  ls            - List files in the read-only root directory");
-    terminal_writeln("  cat <name>    - Read a file from persistent storage");
-    terminal_writeln("  fsinfo        - Show filesystem and block-device information");
-    terminal_writeln("  clear         - Clear the terminal screen");
-    terminal_writeln("  mem           - Display physical memory allocator (PFA) statistics");
-    terminal_writeln("  heap          - Display dynamic kernel heap statistics");
-    terminal_writeln("  ticks         - Display timer tick count and interrupt frequency");
-    terminal_writeln("  uptime        - Display system uptime since boot");
-    terminal_writeln("  threads       - List active kernel threads and lifecycle states");
-    terminal_writeln("  sched         - Display scheduler execution metrics and context switches");
-    terminal_writeln("  yield         - Voluntarily yield the CPU to another thread");
-    terminal_writeln("  sleep <ticks> - Block current thread for specified timer ticks");
-    terminal_writeln("  ps            - List active processes and address space PML4 roots");
-    terminal_writeln("  proc <pid>    - Display detailed process metrics and memory layout");
-    terminal_writeln("  vmmap <pid>   - Walk 4-level page table and display memory mappings");
-    terminal_writeln("  proctest      - Run process isolation and protection test suite");
-    terminal_writeln("  usertest      - Execute Ring 3 user mode & system call test suite");
-    terminal_writeln("  about         - Display educational OS system information");
-    terminal_writeln("  reboot        - Reboot the computer");
+struct help_pager { unsigned page, left; int paged; };
+static int help_wait(struct help_pager *p) {
+    if (!p->paged || p->left) return 1;
+    terminal_write("-- More -- Space/PgDn:page Enter:line q:quit");
+    for (;;) {
+        unsigned char key = (unsigned char)keyboard_getchar();
+        if (education_input(key, keyboard_input_is_serial())) continue;
+        if (key == 'q' || key == 'Q' || key == KEY_ESC) {
+            terminal_follow(); terminal_writeln("\nHelp closed."); return 0;
+        }
+        if (key == ' ' || key == KEY_PAGE_DOWN || key == '\n') {
+            terminal_follow(); terminal_putchar('\n');
+            p->left = key == '\n' ? 1 : p->page;
+            return 1;
+        }
+        terminal_navigation(key);
+    }
+}
+static int help_line(struct help_pager *p, const char *text) {
+    unsigned width = terminal_columns() - 1; /* Leave room before auto-wrap. */
+    int continuation = 0;
+    do {
+        if (!help_wait(p)) return 0;
+        unsigned indent = continuation ? 4 : 0;
+        unsigned n = 0, space = 0, capacity = width - indent;
+        while (text[n] && n < capacity) { if (text[n] == ' ') space = n; n++; }
+        if (text[n] && space) n = space;
+        for (unsigned i = 0; i < indent; i++) terminal_putchar(' ');
+        for (unsigned i = 0; i < n; i++) terminal_putchar(text[i]);
+        terminal_putchar('\n');
+        if (p->left) p->left--;
+        text += n;
+        while (*text == ' ') text++;
+        continuation = 1;
+    } while (*text);
+    return 1;
+}
+static void cmd_help(const char *args) {
+    while (*args == ' ' || *args == '\t') args++;
+    int all = 0;
+    if (*args) {
+        if (args[0] != 'a' || args[1] != 'l' || args[2] != 'l') goto usage;
+        args += 3;
+        while (*args == ' ' || *args == '\t') args++;
+        if (*args) goto usage;
+        all = 1;
+    }
+    unsigned page = terminal_rows() > 8 ? terminal_rows() - 4 : 4;
+    if (page > 20) page = 20;
+    struct help_pager p = {page, page, !all};
+    static const char *const lines[] = {
+        "Command reference", "PgUp/PgDn browse history; End or typing returns live.", "",
+        "SHELL & APPLICATIONS",
+        "  help [all]        Paged help; all prints without pauses",
+        "  clear             Clear terminal and history",
+        "  apps              List isolated user applications",
+        "  run <app> [file]  Launch an application; wait for exit",
+        "  about             System information", "",
+        "FILES & MEMORY",
+        "  ls                List persistent root files",
+        "  cat <name>        Print a file",
+        "  fsinfo            Filesystem and block-device details",
+        "  mem               Physical allocator statistics",
+        "  heap              Kernel heap statistics", "",
+        "PROCESSES & ACTIVITY",
+        "  ps                List processes",
+        "  proc <pid>        Process details",
+        "  vmmap <pid>       Page mappings and permissions",
+        "  threads           Thread states",
+        "  sched             Scheduler counters",
+        "  ticks             PIT timer ticks",
+        "  uptime            Time since boot",
+        "  yield             Yield the CPU",
+        "  sleep <ticks>     Sleep without busy-waiting",
+        "  live              Last displayed live snapshot", "",
+        "DIAGNOSTICS & SYSTEM",
+        "  usertest / ring3  Ring 3 and syscall tests",
+        "  proctest          Process isolation tests",
+        "  livecheck         Live-state diagnostic",
+        "  apptest           Application integration tests",
+        "  reboot            Restart the machine"
+    };
+    for (unsigned i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
+        if (!help_line(&p, lines[i])) return;
+    return;
+usage:
+    terminal_writeln("Usage: help [all]");
 }
 
 static void cmd_clear(void) {
@@ -632,7 +693,7 @@ static void execute_command(char *cmd_line) {
     } else if (streq(cmd, "fsinfo")) {
         cmd_fsinfo();
     } else if (streq(cmd, "help")) {
-        cmd_help();
+        cmd_help(args);
     } else if (streq(cmd, "clear")) {
         cmd_clear();
     } else if (streq(cmd, "mem")) {
@@ -673,10 +734,9 @@ static void execute_command(char *cmd_line) {
 }
 
 void shell_init(void) {
-    terminal_writeln("\r\n==================================================");
-    terminal_writeln("  Welcome to Educational OS Interactive Shell!");
-    terminal_writeln("  Type 'help' to see available commands.");
-    terminal_writeln("==================================================");
+    terminal_writeln("Educational OS - ready.");
+    terminal_writeln("Type help for commands; apps for programs.");
+    terminal_writeln("PgUp/PgDn scroll; End returns to live output.\n");
 }
 
 void shell_run(void) {
@@ -686,9 +746,13 @@ void shell_run(void) {
     terminal_write(SHELL_PROMPT);
 
     for (;;) {
-        char ch = keyboard_getchar();
+        unsigned char ch = (unsigned char)keyboard_getchar();
+
+        if (education_input(ch, keyboard_input_is_serial())) continue;
+        if (terminal_navigation(ch)) continue;
 
         if (ch == '\n') {
+            terminal_follow();
             terminal_putchar('\n');
             line_buf[line_len] = '\0';
             execute_command(line_buf);
@@ -696,11 +760,13 @@ void shell_run(void) {
             terminal_write(SHELL_PROMPT);
         } else if (ch == '\b') {
             if (line_len > 0) {
+                terminal_follow();
                 line_len--;
                 terminal_backspace();
             }
         } else if (ch >= 32 && ch <= 126) {
             if (line_len < SHELL_BUFFER_SIZE - 1) {
+                terminal_follow();
                 line_buf[line_len++] = ch;
                 terminal_putchar(ch);
             }

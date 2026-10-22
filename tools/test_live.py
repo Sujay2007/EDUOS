@@ -26,7 +26,7 @@ def check_live(command, rpc, screenshot, pixel, prompt, receive):
         width, height, _ = frame
         full_cols = (width - 64) // 12
         origin = (width - full_cols * 12) // 2
-        sidebar = 384 if width >= 1000 else 320 if width >= 800 else 256
+        sidebar = 320 if width >= 1200 else 288 if width >= 1000 else 256 if width >= 800 else 208
         cols = min((width - 64 - sidebar) // 12, 200)
         left = origin + cols * 12 + 24
         panel_width = width - left - 24

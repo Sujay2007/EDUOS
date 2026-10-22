@@ -1,4 +1,5 @@
 #include "live.h"
+#include "education.h"
 #include "pit.h"
 #include "serial.h"
 
@@ -91,10 +92,11 @@ static void live_worker(void *arg) {
     for (;;) {
         /* Both rendering paths have a single owner, in normal thread context. */
         gterminal_flush();
+        education_render();
         uint64_t now = timer_get_ticks();
         if (now >= deadline) {
             live_collect(&next);
-            live_panel_render(&next);
+            if (!education_active()) live_panel_render(&next);
             uint64_t flags = interrupts_save_and_disable();
             copy_snapshot(&latest, &next);
             interrupts_restore(flags);

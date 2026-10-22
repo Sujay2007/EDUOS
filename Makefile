@@ -17,7 +17,14 @@ OBJS = kernel/main.o kernel/pfa.o kernel/vmm.o kernel/heap.o \
        kernel/process.o kernel/process_test.o kernel/process_test_blobs.o \
        kernel/block.o kernel/ata.o kernel/fs.o kernel/fs_test.o \
        kernel/graphics.o kernel/font.o kernel/gterminal.o kernel/live.o kernel/live_panel.o kernel/live_probe.o \
-       kernel/apps.o kernel/apps_blobs.o
+       kernel/apps.o kernel/apps_blobs.o kernel/text_buffer.o kernel/education.o kernel/education_model.o kernel/lessons.o
+
+kernel/text_buffer.o: kernel/text_buffer.c kernel/text_buffer.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+kernel/gterminal.o: kernel/text_buffer.h
+kernel/terminal.o: kernel/keyboard.h
+kernel/shell.o: kernel/terminal.h kernel/keyboard.h
 
 kernel/apps.o: kernel/apps.c kernel/apps.h kernel/process.h kernel/thread.h kernel/vmm.h kernel/pfa.h kernel/pit.h kernel/serial.h kernel/syscall.h
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -174,3 +181,11 @@ test-live: all
 
 test-final: all
 	python3 tools/test_final.py
+
+kernel/education.o: kernel/education.c kernel/education.h kernel/education_model.h kernel/lessons.h
+	$(CC) $(CFLAGS) -c $< -o $@
+kernel/education_model.o: kernel/education_model.c kernel/education_model.h
+	$(CC) $(CFLAGS) -c $< -o $@
+kernel/lessons.o: kernel/lessons.c kernel/lessons.h
+	$(CC) $(CFLAGS) -c $< -o $@
+kernel/gterminal.o kernel/live.o kernel/shell.o: kernel/education.h

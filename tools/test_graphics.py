@@ -40,6 +40,17 @@ def main(extra_checks=None):
             "kernel/graphics.c", "kernel/font.c", "tests/graphics_test.c", "-o", str(executable)
         ], cwd=ROOT, check=True)
         subprocess.run([str(executable)], check=True)
+        subprocess.run([
+            "clang", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Ikernel",
+            "kernel/text_buffer.c", "tests/text_buffer_test.c", "-o", str(executable)
+        ], cwd=ROOT, check=True)
+        subprocess.run([str(executable)], check=True)
+        subprocess.run([
+            "clang", "-O2", "-std=c11", "-Wall", "-Wextra", "-Werror", "-Ikernel", "-Itools/limine",
+            "kernel/education_model.c", "kernel/education.c", "kernel/lessons.c", "kernel/graphics.c",
+            "kernel/font.c", "tests/education_test.c", "-o", str(executable)
+        ], cwd=ROOT, check=True)
+        subprocess.run([str(executable)], check=True)
         path = temporary / "qmp.sock"
         process = subprocess.Popen(COMMAND + ["-qmp", f"unix:{path},server=on,wait=off"],
                                    cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -76,9 +87,9 @@ def main(extra_checks=None):
 
             rpc("qmp_capabilities")
 
-            def receive(start, marker):
+            def receive(start, marker, count=1):
                 deadline = time.monotonic() + 45
-                while marker not in output[start:]:
+                while output[start:].count(marker) < count:
                     require(time.monotonic() < deadline, "timeout waiting for shell")
                     for key, _ in selector.select(0.2):
                         data = key.fileobj.read1(8192)
@@ -126,6 +137,11 @@ def main(extra_checks=None):
                 require(marker in startup, f"missing result: {marker.decode()}")
             require(b"[FAIL]" not in startup and b"[SKIP]" not in startup,
                     "existing boot suite failure or skipped storage test")
+            def key(code):
+                rpc("send-key", {"keys": [{"type": "qcode", "data": code}], "hold-time": 40})
+                time.sleep(0.06)
+            from test_course import check_course
+            check_course(command, screenshot, pixel, key)
             first = screenshot("desktop-boot")
             width, height, _ = first
             require(pixel(first, 0, 0) == bytes.fromhex("1e3047") and
@@ -138,13 +154,10 @@ def main(extra_checks=None):
             # 'e' at the shell prompt: independent check of glyph pixels and background.
             for x, bits in enumerate((0x38, 0x54, 0x54, 0x54, 0x18)):
                 for y in range(7):
-                    expected = "dce8f5" if bits & (1 << y) else "101b2b"
+                    expected = "67d8b4" if bits & (1 << y) else "101b2b"
                     require(pixel(clean, ox + x * 2, 100 + y * 2) == bytes.fromhex(expected),
                             "graphical prompt/font pixel mismatch")
 
-            def key(code):
-                rpc("send-key", {"keys": [{"type": "qcode", "data": code}], "hold-time": 40})
-                time.sleep(0.06)
 
             start = len(output)
             # Backspace exercises the existing keyboard driver and shell line editing.
@@ -166,12 +179,14 @@ def main(extra_checks=None):
             require(b"EDUFS v1: read-only" in command("fsinfo"), "filesystem command regression")
             require(b"TID" in command("threads"), "direct-serial shell output regression")
             command("cat pattern.txt")  # wrap across multiple terminal rows
-            command("help")
-            command("help")  # force scrolling without touching desktop chrome
+            command("help all")
+            command("help all")  # force scrolling without touching desktop chrome
             scrolled = screenshot("desktop-scroll")
             require(pixel(scrolled, 0, 0) == pixel(first, 0, 0) and
                     pixel(scrolled, 0, height - 1) == pixel(first, 0, height - 1),
                     "scroll damaged desktop chrome")
+            from test_terminal import check_terminal
+            check_terminal(command, rpc, screenshot, pixel, prompt, receive, key)
             if extra_checks:
                 extra_checks(command, rpc, screenshot, pixel, prompt, receive)
             print("QEMU PASS: framebuffer, desktop, graphical prompt, clear, PS/2 input/backspace,")

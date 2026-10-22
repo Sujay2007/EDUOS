@@ -1,8 +1,13 @@
 # Educational x86-64 OS
 
 A real freestanding x86-64 kernel, booted by Limine and demonstrated in QEMU.
-The desktop contains a keyboard-operated shell, a live kernel-state panel, and a
-small application canvas. Serial input/output remains available at all times.
+The default framebuffer interface is an **Interactive OS Explorer**: open a
+mechanism directly, manipulate its bounded teaching model, and observe the
+consequences. Processes, scheduling, memory, interrupts, syscalls, files and
+concurrency have direct controls. Explanations and source references are optional;
+there are no course-completion gates. Press **Tab** for the preserved shell,
+real live inspector and application canvas. Serial shell access remains active.
+See [LEARNING.md](LEARNING.md) for controls, model assumptions and source mapping.
 
 ## Architecture
 
@@ -90,7 +95,10 @@ through PS/2 or serial; mouse/window management is not implemented.
 
 Short reproducible presentation, using the standard sample disk:
 
-1. Run `make -B`, then `make run-graphics`. Wait for `edus>` and the live panel.
+1. Run `make -B`, then `make run-graphics`. Enter Processes directly. C creates
+   children; select slots with 1..8, X exits, W waits/collects. R resets; Esc returns
+   to the explorer grid. E opens an explanation; I opens source references.
+   Press Tab for Tools and its `edus>` prompt.
 2. Type `clear`, `fsinfo`, then `apps`.
 3. Type `run hello`; observe the launch PID matching the application's PID.
 4. Type `run files`, then `run view hello.txt` to demonstrate persistent data.
@@ -109,7 +117,8 @@ python3 tools/test_final.py
 make test-final
 ```
 
-This runs the existing primitive/graphical/live checks and boot-time thread,
+This first tests explorer models, direct operations and real experiment-screen pixels,
+then selects Tools and runs the existing primitive/graphical/live checks and boot-time thread,
 user-mode, process and filesystem suites, then application launch/file/error/
 canvas/cleanup checks. It checks real screenshots and PS/2 input, not just serial
 success. It then runs the existing two-boot persistence regression and verifies

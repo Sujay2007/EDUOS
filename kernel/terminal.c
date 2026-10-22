@@ -1,6 +1,25 @@
 #include "terminal.h"
 #include "serial.h"
 #include "graphics.h"
+#include "keyboard.h"
+
+unsigned terminal_columns(void) { return gterminal_columns(); }
+unsigned terminal_rows(void) { return gterminal_rows(); }
+void terminal_follow(void) { gterminal_navigate(GT_FOLLOW); }
+int terminal_navigation(unsigned char key) {
+    enum gterminal_navigation action;
+    switch (key) {
+        case KEY_PAGE_UP: action = GT_PAGE_UP; break;
+        case KEY_PAGE_DOWN: action = GT_PAGE_DOWN; break;
+        case KEY_UP: action = GT_UP; break;
+        case KEY_DOWN: action = GT_DOWN; break;
+        case KEY_HOME: action = GT_HOME; break;
+        case KEY_END: action = GT_FOLLOW; break;
+        default: return 0;
+    }
+    gterminal_navigate(action);
+    return 1;
+}
 
 void terminal_init(void) {
     gterminal_init();

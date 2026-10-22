@@ -20,6 +20,10 @@
 #define KEY_DOWN        0x86
 #define KEY_LEFT        0x87
 #define KEY_RIGHT       0x88
+#define KEY_PAGE_UP     0x89
+#define KEY_PAGE_DOWN   0x8a
+#define KEY_HOME        0x8b
+#define KEY_END         0x8c
 
 struct key_event {
     uint8_t scancode;
@@ -35,6 +39,7 @@ struct key_event {
  * Initialize the PS/2 keyboard controller, register IRQ1 handler, and clear buffers.
  */
 int keyboard_init(void);
+int keyboard_input_is_serial(void);
 
 /*
  * Poll for an available ASCII character (from PS/2 keyboard or serial input).

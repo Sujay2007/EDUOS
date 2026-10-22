@@ -71,7 +71,7 @@ def boot(number):
                 "cat readme.txt failed")
         require(b"File not found." in command("cat missing.txt"), "missing file error failed")
         require(b"Invalid filename." in command("cat ../hello.txt"), "invalid filename accepted")
-        require(b"proctest" in command("help"), "existing shell command missing")
+        require(b"proctest" in command("help all"), "existing shell command missing")
         print(f"Boot {number}: existing suites, filesystem suite, ls/cat/fsinfo PASS")
     finally:
         selector.close()

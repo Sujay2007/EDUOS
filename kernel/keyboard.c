@@ -38,15 +38,43 @@ static volatile uint8_t ctrl_pressed = 0;
 static volatile uint8_t alt_pressed = 0;
 
 /* Circular ring buffer for received ASCII characters */
-static volatile char kbd_buffer[KEYBOARD_BUFFER_SIZE];
+static volatile uint16_t kbd_buffer[KEYBOARD_BUFFER_SIZE];
 static volatile uint32_t kbd_head = 0;
 static volatile uint32_t kbd_tail = 0;
+static uint8_t extended;
+static int last_serial;
+int keyboard_input_is_serial(void) { return last_serial; }
+static unsigned serial_escape, serial_parameter;
+
+static void push_key(unsigned char ch) {
+    uint32_t next = (kbd_head + 1) % KEYBOARD_BUFFER_SIZE;
+    if (next != kbd_tail) { kbd_buffer[kbd_head] = ch; kbd_head = next; }
+    thread_wake_input();
+}
 
 static void keyboard_isr(struct interrupt_frame *frame) {
     (void)frame;
 
     uint8_t scancode = inb(KBD_DATA_PORT);
     pic_send_eoi(1);
+
+    if (scancode == 0xe0) { extended = 1; return; }
+    if (extended) {
+        extended = 0;
+        if (scancode & 0x80) return;
+        switch (scancode) {
+            case 0x49: push_key(KEY_PAGE_UP); break;
+            case 0x51: push_key(KEY_PAGE_DOWN); break;
+            case 0x48: push_key(KEY_UP); break;
+            case 0x50: push_key(KEY_DOWN); break;
+            case 0x4b: push_key(KEY_LEFT); break;
+            case 0x4d: push_key(KEY_RIGHT); break;
+            case 0x47: push_key(KEY_HOME); break;
+            case 0x4f: push_key(KEY_END); break;
+            default: break;
+        }
+        return;
+    }
 
     uint8_t is_break = (scancode & 0x80) != 0;
     uint8_t make_code = scancode & 0x7F;
@@ -92,12 +120,7 @@ static void keyboard_isr(struct interrupt_frame *frame) {
         }
 
         if (ch != 0) {
-            uint32_t next_head = (kbd_head + 1) % KEYBOARD_BUFFER_SIZE;
-            if (next_head != kbd_tail) {
-                kbd_buffer[kbd_head] = ch;
-                kbd_head = next_head;
-            }
-            thread_wake_input();
+            push_key(ch);
         }
     }
 }
@@ -107,6 +130,29 @@ void keyboard_drain_serial(void) {
     while (serial_has_rx()) {
         int ser_ch = serial_getchar_nonblock();
         if (ser_ch >= 0) {
+            if (serial_escape == 1) {
+                serial_escape = ser_ch == '[' || ser_ch == 'O' ? 2 : 0;
+                serial_parameter = 0;
+                if (serial_escape) continue;
+            } else if (serial_escape == 2) {
+                if (ser_ch >= '0' && ser_ch <= '9') {
+                    serial_parameter = serial_parameter < 100 ? serial_parameter * 10 + ser_ch - '0' : 100;
+                    continue;
+                }
+                unsigned char key = ser_ch == 'A' ? KEY_UP : ser_ch == 'B' ? KEY_DOWN :
+                    ser_ch == 'H' ? KEY_HOME : ser_ch == 'F' ? KEY_END :
+                    ser_ch == '~' && serial_parameter == 5 ? KEY_PAGE_UP :
+                    ser_ch == '~' && serial_parameter == 6 ? KEY_PAGE_DOWN :
+                    ser_ch == '~' && serial_parameter == 1 ? KEY_HOME :
+                    ser_ch == '~' && serial_parameter == 4 ? KEY_END : 0;
+                serial_escape = 0;
+                if (key) {
+                    uint32_t next=(kbd_head+1)%KEYBOARD_BUFFER_SIZE;
+                    if(next!=kbd_tail) {kbd_buffer[kbd_head]=key|256; kbd_head=next;thread_wake_input();}
+                }
+                continue;
+            }
+            if (ser_ch == 27) { serial_escape = 1; continue; }
             /* Normalize CR/LF and Backspace */
             if (ser_ch == '\r') {
                 ser_ch = '\n';
@@ -115,7 +161,7 @@ void keyboard_drain_serial(void) {
             }
             uint32_t next_head = (kbd_head + 1) % KEYBOARD_BUFFER_SIZE;
             if (next_head != kbd_tail) {
-                kbd_buffer[kbd_head] = (char)ser_ch;
+                kbd_buffer[kbd_head] = (unsigned char)ser_ch | 256;
                 kbd_head = next_head;
                 drained = 1;
             }
@@ -150,6 +196,8 @@ int keyboard_init(void) {
     caps_lock_active = 0;
     ctrl_pressed = 0;
     alt_pressed = 0;
+    extended = 0;
+    serial_escape = serial_parameter = 0;
 
     /* Register ISR for IRQ1 (vector 33) */
     idt_register_handler(33, keyboard_isr);
@@ -176,7 +224,9 @@ int keyboard_getchar_nonblock(void) {
 
     /* 1. Check PS/2 keyboard ring buffer */
     if (kbd_head != kbd_tail) {
-        char ch = kbd_buffer[kbd_tail];
+        uint16_t event = kbd_buffer[kbd_tail];
+        last_serial = (event & 256) != 0;
+        char ch = (unsigned char)event;
         kbd_tail = (kbd_tail + 1) % KEYBOARD_BUFFER_SIZE;
         interrupts_restore(rflags);
         return (int)(uint8_t)ch;
@@ -192,7 +242,9 @@ char keyboard_getchar(void) {
 
         /* 1. Check PS/2 keyboard ring buffer */
         if (kbd_head != kbd_tail) {
-            char ch = kbd_buffer[kbd_tail];
+            uint16_t event = kbd_buffer[kbd_tail];
+        last_serial = (event & 256) != 0;
+        char ch = (unsigned char)event;
             kbd_tail = (kbd_tail + 1) % KEYBOARD_BUFFER_SIZE;
             interrupts_restore(rflags);
             return ch;
@@ -202,7 +254,9 @@ char keyboard_getchar(void) {
         if (serial_has_rx()) {
             keyboard_drain_serial();
             if (kbd_head != kbd_tail) {
-                char ch = kbd_buffer[kbd_tail];
+                uint16_t event = kbd_buffer[kbd_tail];
+        last_serial = (event & 256) != 0;
+        char ch = (unsigned char)event;
                 kbd_tail = (kbd_tail + 1) % KEYBOARD_BUFFER_SIZE;
                 interrupts_restore(rflags);
                 return ch;

@@ -21,6 +21,10 @@ void gfx_glyph(struct gfx_surface *s, int64_t x, int64_t y, unsigned char ch,
                uint32_t fg, uint32_t bg, unsigned scale);
 void gterminal_init(void);
 void gterminal_putchar(char c);
+enum gterminal_navigation { GT_FOLLOW = 256, GT_PAGE_UP, GT_PAGE_DOWN, GT_UP, GT_DOWN, GT_HOME };
+void gterminal_navigate(enum gterminal_navigation action);
+unsigned gterminal_columns(void);
+unsigned gterminal_rows(void);
 
 #define APP_CANVAS_WIDTH 192U
 #define APP_CANVAS_HEIGHT 24U

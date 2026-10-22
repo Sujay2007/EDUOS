@@ -43,5 +43,10 @@ void terminal_clear(void);
  * Visually erase the previous character on the terminal display (\b \b).
  */
 void terminal_backspace(void);
+unsigned terminal_columns(void);
+unsigned terminal_rows(void);
+/* Navigation does not enter the shell command buffer or write serial text. */
+int terminal_navigation(unsigned char key);
+void terminal_follow(void);
 
 #endif /* TERMINAL_H */

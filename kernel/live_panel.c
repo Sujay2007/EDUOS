@@ -85,9 +85,10 @@ void live_panel_render(const struct live_snapshot *s) {
         history[history_at++ % 32] = switches > 20 ? 20 : switches;
         text("Switch history: last 32 samples (0..20)"); emit(ACCENT);
         y = top + 28 + line * 11;
+        unsigned stride = (width - 24) / 32;
         for (unsigned i = 0; i < 32; i++) {
             unsigned h = history[(history_at + i) % 32];
-            gfx_rect(screen, left + 12 + i * 8, y + 20 - h, 5, h, ACCENT);
+            gfx_rect(screen, left + 12 + i * stride, y + 20 - h, stride > 2 ? stride - 2 : 1, h, ACCENT);
         }
         line += 2;
     }
